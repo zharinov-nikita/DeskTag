@@ -9,16 +9,21 @@ every desktop. Rust + Win32.
 cargo build --release   # -> target/release/desktag.exe
 cargo run -- --once     # print current desktop label and exit (dev one-shot)
 cargo run -- --gen-icon assets/desktag.ico  # regenerate the exe icon asset
-cargo test              # unit tests: label + edit + (Windows) icon raster/.ico
+cargo test              # unit tests: label + edit + position + config + (Windows) icon raster/.ico
 cargo clippy            # lint
 ```
+
+A cargo-husky `pre-commit` hook (in `.git/hooks`, shared by worktrees) runs
+`cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings`, and
+`cargo test` on every commit — keep the tree rustfmt-clean and warning-free or
+commits are rejected.
 
 Run the built binary: `desktag.exe` (daemon; quit via tray icon) or
 `desktag.exe --once`.
 
 ## Architecture
 
-Single binary, six modules under `src/`:
+Single binary, eight modules under `src/`:
 
 - `main.rs` — entry. `--once` prints the label and exits; `--gen-icon [path]`
   writes the `.ico` asset and exits; otherwise sets
@@ -27,9 +32,12 @@ Single binary, six modules under `src/`:
   `hide_from_alt_tab` -> `install_tray` -> `start_listener` -> message loop.
 - `badge.rs` — the Win32 window: layered, always-on-top pill. GDI paint,
   rounded-rect region, uniform alpha, tray icon, `wndproc`, and the inline
-  rename mode (double-click to edit the desktop name). Owns UI-thread state
-  (`thread_local!` LABEL + EDIT buffer + caret). Receives clicks (no
-  `WS_EX_TRANSPARENT`) but never activates (`WS_EX_NOACTIVATE`).
+  rename mode (double-click to edit the desktop name). Also owns badge
+  placement: the tray **Position** submenu (nine anchor presets) and
+  drag-to-move; `resize_and_position` reads the `POSITION` thread-local.
+  Owns UI-thread state (`thread_local!` LABEL + EDIT buffer + caret +
+  POSITION + DRAG). Receives clicks (no `WS_EX_TRANSPARENT`) but never
+  activates (`WS_EX_NOACTIVATE`).
 - `desktop.rs` — thin wrapper over the `winvd` crate: read current desktop
   index+name, rename the current desktop, pin to all desktops, spawn the
   event-listener thread.
@@ -41,6 +49,12 @@ Single binary, six modules under `src/`:
 - `edit.rs` — pure `EditState` (buffer, caret, `anchor`-based selection) for
   inline rename mode: char/word caret movement, range selection (Shift/Ctrl),
   insert/delete/replace. OS-independent; unit-tested.
+- `position.rs` — pure badge-position model: `Anchor` (9 presets), `Position`
+  (anchor | custom x/y), `parse`/`format` for the config file, `anchor_origin`
+  (origin inside a work-area rect) and `clamp` (keep custom in view).
+  OS-independent; unit-tested alongside `label.rs`/`edit.rs`.
+- `config.rs` — load/save the chosen `Position` to `%APPDATA%\DeskTag\config`
+  (key=value). Best-effort IO; missing/garbage → default (top-center).
 
 `build.rs` embeds `assets/desktag.ico` (regenerate with `--gen-icon`) as the
 exe icon resource via `winresource`.
@@ -65,6 +79,15 @@ re-reads the label, repaints, and rebuilds the tray icon.
   forces keyboard focus via `SetForegroundWindow` + `SetFocus` (verified to work
   despite `WS_EX_NOACTIVATE`). Display vs. rename text both flow through
   `WM_PAINT`/`measure` via `with_display_text`; `TIMER_CARET` blinks the caret.
+- **Position is config-driven.** `resize_and_position` reads the `POSITION`
+  thread-local (loaded by `config::load` in `create`). Anchors use the primary
+  *work area* (`SPI_GETWORKAREA`) with a `scale(8)` margin; custom is absolute
+  virtual-screen coords, `clamp`ed into `SM_*VIRTUALSCREEN` on apply. Re-applied
+  on `WM_DISPLAYCHANGE` and on `WM_SETTINGCHANGE`/`SPI_SETWORKAREA`.
+- **Drag vs. double-click.** `WM_LBUTTONDOWN` arms a drag (capture + start
+  point); it only becomes a move once the cursor passes `SM_CXDRAG`/`SM_CYDRAG`,
+  so a double-click's tiny jitter still reaches `WM_LBUTTONDBLCLK` (rename).
+  Drag is disabled while renaming. `WM_CAPTURECHANGED` cancels a drag.
 - **`pin_with_retry`.** The shell grants the app view a moment *after* the
   window is shown, and `winvd` reports the gap as terminal `WindowNotFound`.
   Retry up to 3s while pumping messages.
