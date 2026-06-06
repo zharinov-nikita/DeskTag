@@ -180,6 +180,23 @@ fn current_palette() -> Palette {
     Palette::for_theme(CURRENT_THEME.with(|t| t.get()))
 }
 
+/// True when a WM_SETTINGCHANGE lParam points to the wide string
+/// "ImmersiveColorSet" — the signal Windows broadcasts on a light/dark or
+/// accent change. lParam can be null for other setting changes.
+unsafe fn lparam_is_immersive_color_set(lparam: LPARAM) -> bool {
+    if lparam.0 == 0 {
+        return false;
+    }
+    let ptr = lparam.0 as *const u16;
+    let mut len = 0usize;
+    // "ImmersiveColorSet" is 17 chars; cap the scan well above that.
+    while len <= 64 && *ptr.add(len) != 0 {
+        len += 1;
+    }
+    let s = String::from_utf16_lossy(std::slice::from_raw_parts(ptr, len));
+    s == "ImmersiveColorSet"
+}
+
 unsafe fn make_font(hwnd: HWND) -> HFONT {
     CreateFontW(
         -scale(hwnd, 15),
@@ -375,6 +392,24 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
                     apply_label(hwnd, &text);
                 }
                 update_tray_icon(hwnd);
+                LRESULT(0)
+            }
+            WM_SETTINGCHANGE => {
+                if lparam_is_immersive_color_set(lparam) {
+                    let new_theme = crate::theme::detect();
+                    let changed = CURRENT_THEME.with(|t| {
+                        if t.get() != new_theme {
+                            t.set(new_theme);
+                            true
+                        } else {
+                            false
+                        }
+                    });
+                    if changed {
+                        let _ = InvalidateRect(hwnd, None, BOOL(1));
+                        update_tray_icon(hwnd);
+                    }
+                }
                 LRESULT(0)
             }
             WM_APP_TRAY => {
