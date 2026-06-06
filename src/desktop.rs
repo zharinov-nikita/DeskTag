@@ -55,8 +55,8 @@ pub fn start_listener(hwnd: HWND) -> Result<winvd::DesktopEventThread> {
     use winvd::DesktopEvent;
 
     let (tx, rx) = std::sync::mpsc::channel::<DesktopEvent>();
-    let guard = winvd::listen_desktop_events(tx)
-        .map_err(|e| anyhow!("listen_desktop_events: {e:?}"))?;
+    let guard =
+        winvd::listen_desktop_events(tx).map_err(|e| anyhow!("listen_desktop_events: {e:?}"))?;
 
     // HWND is not Send; pass the raw pointer as isize and rebuild it in the thread.
     let hwnd_raw = hwnd.0 as isize;

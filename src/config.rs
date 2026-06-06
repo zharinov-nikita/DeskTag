@@ -36,8 +36,8 @@ pub fn save(pos: &Position) {
 }
 
 fn save_to(path: Option<PathBuf>, pos: &Position) -> std::io::Result<()> {
-    let path = path
-        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "APPDATA not set"))?;
+    let path =
+        path.ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "APPDATA not set"))?;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }

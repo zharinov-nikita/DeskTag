@@ -15,7 +15,12 @@ pub struct Rect {
 
 impl Rect {
     pub fn new(left: i32, top: i32, right: i32, bottom: i32) -> Self {
-        Rect { left, top, right, bottom }
+        Rect {
+            left,
+            top,
+            right,
+            bottom,
+        }
     }
     fn width(&self) -> i32 {
         self.right - self.left
@@ -240,14 +245,23 @@ mod tests {
     fn anchor_corners() {
         assert_eq!(anchor_origin(Anchor::TopLeft, work(), SIZE, M), (10, 10));
         assert_eq!(anchor_origin(Anchor::TopRight, work(), SIZE, M), (890, 10));
-        assert_eq!(anchor_origin(Anchor::BottomLeft, work(), SIZE, M), (10, 550));
-        assert_eq!(anchor_origin(Anchor::BottomRight, work(), SIZE, M), (890, 550));
+        assert_eq!(
+            anchor_origin(Anchor::BottomLeft, work(), SIZE, M),
+            (10, 550)
+        );
+        assert_eq!(
+            anchor_origin(Anchor::BottomRight, work(), SIZE, M),
+            (890, 550)
+        );
     }
 
     #[test]
     fn anchor_edges_and_center() {
         assert_eq!(anchor_origin(Anchor::TopCenter, work(), SIZE, M), (450, 10));
-        assert_eq!(anchor_origin(Anchor::BottomCenter, work(), SIZE, M), (450, 550));
+        assert_eq!(
+            anchor_origin(Anchor::BottomCenter, work(), SIZE, M),
+            (450, 550)
+        );
         assert_eq!(anchor_origin(Anchor::MidLeft, work(), SIZE, M), (10, 280));
         assert_eq!(anchor_origin(Anchor::MidRight, work(), SIZE, M), (890, 280));
         assert_eq!(anchor_origin(Anchor::Center, work(), SIZE, M), (450, 280));
