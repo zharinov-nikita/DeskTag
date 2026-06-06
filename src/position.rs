@@ -161,6 +161,18 @@ pub fn anchor_origin(anchor: Anchor, work: Rect, size: (i32, i32), margin: i32) 
     }
 }
 
+/// Push `pos` so a pill of `size` stays fully inside `bounds`. If the pill is
+/// larger than `bounds` on an axis, pin to the top/left edge of that axis.
+pub fn clamp(pos: (i32, i32), bounds: Rect, size: (i32, i32)) -> (i32, i32) {
+    let (x, y) = pos;
+    let (w, h) = size;
+    // .max(edge) handles a pill wider/taller than bounds: max < min would panic
+    // in i32::clamp, so floor the upper bound at the near edge.
+    let max_x = (bounds.right - w).max(bounds.left);
+    let max_y = (bounds.bottom - h).max(bounds.top);
+    (x.clamp(bounds.left, max_x), y.clamp(bounds.top, max_y))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -247,5 +259,28 @@ mod tests {
         let w = Rect::new(100, 50, 1100, 650);
         assert_eq!(anchor_origin(Anchor::TopLeft, w, SIZE, M), (110, 60));
         assert_eq!(anchor_origin(Anchor::BottomRight, w, SIZE, M), (990, 600));
+    }
+
+    #[test]
+    fn clamp_inside_unchanged() {
+        assert_eq!(clamp((500, 300), work(), SIZE), (500, 300));
+    }
+
+    #[test]
+    fn clamp_pushes_in() {
+        assert_eq!(clamp((-50, -50), work(), SIZE), (0, 0));
+        assert_eq!(clamp((5000, 5000), work(), SIZE), (900, 560));
+    }
+
+    #[test]
+    fn clamp_respects_bounds_offset() {
+        let b = Rect::new(100, 50, 1100, 650);
+        assert_eq!(clamp((0, 0), b, SIZE), (100, 50));
+    }
+
+    #[test]
+    fn clamp_pill_larger_than_bounds_pins_topleft() {
+        let tiny = Rect::new(0, 0, 50, 20);
+        assert_eq!(clamp((10, 10), tiny, (100, 40)), (0, 0));
     }
 }
