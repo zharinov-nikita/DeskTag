@@ -8,7 +8,8 @@ every desktop. Rust + Win32.
 ```bash
 cargo build --release   # -> target/release/desktag.exe
 cargo run -- --once     # print current desktop label and exit (dev one-shot)
-cargo test              # unit tests (label + edit; OS-independent only)
+cargo run -- --gen-icon assets/desktag.ico  # regenerate the exe icon asset
+cargo test              # unit tests: label + edit + (Windows) icon raster/.ico
 cargo clippy            # lint
 ```
 
@@ -17,9 +18,10 @@ Run the built binary: `desktag.exe` (daemon; quit via tray icon) or
 
 ## Architecture
 
-Single binary, five modules under `src/`:
+Single binary, six modules under `src/`:
 
-- `main.rs` — entry. `--once` prints the label and exits; otherwise sets
+- `main.rs` — entry. `--once` prints the label and exits; `--gen-icon [path]`
+  writes the `.ico` asset and exits; otherwise sets
   per-monitor DPI awareness and runs the daemon. The daemon sequence is
   load-bearing (see Gotchas): create badge -> `pin_with_retry` ->
   `hide_from_alt_tab` -> `install_tray` -> `start_listener` -> message loop.
@@ -31,14 +33,20 @@ Single binary, five modules under `src/`:
 - `desktop.rs` — thin wrapper over the `winvd` crate: read current desktop
   index+name, rename the current desktop, pin to all desktops, spawn the
   event-listener thread.
+- `icon.rs` — pure-ish GDI rasteriser of the badge pill. `rasterize` ->
+  RGBA; `make_tray_hicon` (live tray icon, rebuilt on desktop change);
+  `write_ico` (multi-size .ico for the embedded exe resource).
 - `label.rs` — pure `format_label(index, name)`. OS-independent; unit-tested
   alongside `edit.rs`.
 - `edit.rs` — pure `EditState` (buffer, caret, `anchor`-based selection) for
   inline rename mode: char/word caret movement, range selection (Shift/Ctrl),
   insert/delete/replace. OS-independent; unit-tested.
 
+`build.rs` embeds `assets/desktag.ico` (regenerate with `--gen-icon`) as the
+exe icon resource via `winresource`.
+
 Desktop change -> listener thread posts `WM_APP_DESKTOP_CHANGED` -> `wndproc`
-re-reads the label and repaints.
+re-reads the label, repaints, and rebuilds the tray icon.
 
 ## Gotchas
 
@@ -66,6 +74,13 @@ re-reads the label and repaints.
   stolen). `TIMER_POLL` (750ms) is a *fallback* only, started when the event
   listener fails to start.
 - **`COLORREF` is `0x00BBGGRR`**, not RGB.
+- **GDI writes alpha=0.** Classic GDI drawing leaves the DIB alpha byte at 0.
+  `icon.rs::rasterize` fixes it in one pass: pixels inside the rounded-rect
+  region get alpha 255, outside 0. The tray HICON also carries a 1-bpp AND
+  mask from that alpha as a belt-and-braces transparency.
+- **Tray icon ownership.** `CURRENT_TRAY_ICON` holds the one owned HICON;
+  `DestroyIcon` runs on every replace and on teardown. The stock fallback
+  (`IDI_APPLICATION`) is shared and is never destroyed (cell stays null).
 - **Naming:** the folder/README say "DeskTag" but the crate and binary are
   `desktag` (lowercase); the window class is `DeskTagBadgeClass`.
 

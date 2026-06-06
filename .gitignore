@@ -2,3 +2,5 @@
 **/*.rs.bk
 *.pdb
 superpowers/
+.claude/settings.local.json
+ISSUES.md
