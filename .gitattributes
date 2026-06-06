@@ -1,0 +1,3 @@
+# Git hooks are copied verbatim into .git/hooks and run by MSYS sh on Windows.
+# They MUST stay LF, or the shebang breaks with "/bin/sh^M: bad interpreter".
+.cargo-husky/hooks/** text eol=lf
