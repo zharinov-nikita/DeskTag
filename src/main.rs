@@ -1,4 +1,5 @@
 mod desktop;
+mod label;
 
 fn main() -> anyhow::Result<()> {
     if std::env::args().any(|a| a == "--once") {
