@@ -184,6 +184,88 @@ pub fn make_tray_hicon(text: &str, size: u32) -> Result<HICON> {
     }
 }
 
+/// Encode `text` as a multi-size .ico (16/32/48/256, BMP entries) and write `path`.
+pub fn write_ico(path: &str, text: &str) -> Result<()> {
+    let bytes = encode_ico(text, &[16, 32, 48, 256])?;
+    std::fs::write(path, bytes).map_err(|e| anyhow!("write {path}: {e}"))
+}
+
+/// Assemble an ICONDIR + entries + BMP images. No PNG; BMP entries only.
+fn encode_ico(text: &str, sizes: &[u32]) -> Result<Vec<u8>> {
+    let images: Vec<Vec<u8>> = sizes
+        .iter()
+        .map(|&sz| bmp_icon_image(text, sz))
+        .collect::<Result<_>>()?;
+
+    let count = sizes.len() as u16;
+    let mut out = Vec::new();
+    out.extend_from_slice(&0u16.to_le_bytes()); // reserved
+    out.extend_from_slice(&1u16.to_le_bytes()); // type = icon
+    out.extend_from_slice(&count.to_le_bytes());
+
+    let mut offset = 6 + 16 * count as u32; // data starts after the directory
+    for (i, &sz) in sizes.iter().enumerate() {
+        let dim = if sz >= 256 { 0u8 } else { sz as u8 };
+        let len = images[i].len() as u32;
+        out.push(dim); // width
+        out.push(dim); // height
+        out.push(0); // color count
+        out.push(0); // reserved
+        out.extend_from_slice(&1u16.to_le_bytes()); // planes
+        out.extend_from_slice(&32u16.to_le_bytes()); // bit count
+        out.extend_from_slice(&len.to_le_bytes()); // bytes in resource
+        out.extend_from_slice(&offset.to_le_bytes()); // image offset
+        offset += len;
+    }
+    for img in &images {
+        out.extend_from_slice(img);
+    }
+    Ok(out)
+}
+
+/// One BMP-format icon image: BITMAPINFOHEADER (height doubled for XOR+AND),
+/// 32-bpp BGRA XOR (bottom-up), then a 1-bpp AND mask (bottom-up, 4-byte rows).
+fn bmp_icon_image(text: &str, size: u32) -> Result<Vec<u8>> {
+    let rgba = rasterize(text, size)?; // top-down RGBA
+    let s = size as usize;
+    let mut out = Vec::new();
+
+    out.extend_from_slice(&40u32.to_le_bytes()); // biSize
+    out.extend_from_slice(&(size as i32).to_le_bytes()); // biWidth
+    out.extend_from_slice(&((size * 2) as i32).to_le_bytes()); // biHeight = 2x
+    out.extend_from_slice(&1u16.to_le_bytes()); // planes
+    out.extend_from_slice(&32u16.to_le_bytes()); // bit count
+    out.extend_from_slice(&0u32.to_le_bytes()); // BI_RGB
+    out.extend_from_slice(&0u32.to_le_bytes()); // biSizeImage (0 allowed)
+    out.extend_from_slice(&0i32.to_le_bytes()); // x ppm
+    out.extend_from_slice(&0i32.to_le_bytes()); // y ppm
+    out.extend_from_slice(&0u32.to_le_bytes()); // clr used
+    out.extend_from_slice(&0u32.to_le_bytes()); // clr important
+
+    // XOR: BGRA, bottom-up.
+    for y in (0..s).rev() {
+        for x in 0..s {
+            let i = (y * s + x) * 4;
+            out.push(rgba[i + 2]); // B
+            out.push(rgba[i + 1]); // G
+            out.push(rgba[i]); // R
+            out.push(rgba[i + 3]); // A
+        }
+    }
+    // AND mask: 1 bpp, bottom-up, rows padded to 4 bytes. 1 = transparent.
+    let stride = s.div_ceil(32) * 4;
+    for y in (0..s).rev() {
+        let mut row = vec![0u8; stride];
+        for x in 0..s {
+            if rgba[(y * s + x) * 4 + 3] == 0 {
+                row[x >> 3] |= 0x80 >> (x & 7);
+            }
+        }
+        out.extend_from_slice(&row);
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 #[cfg(windows)]
 mod tests {
@@ -206,5 +288,20 @@ mod tests {
         unsafe {
             let _ = windows::Win32::UI::WindowsAndMessaging::DestroyIcon(icon);
         }
+    }
+
+    #[test]
+    fn encode_ico_has_valid_header() {
+        let sizes = [16u32, 32, 48, 256];
+        let bytes = encode_ico("D", &sizes).unwrap();
+        // ICONDIR magic: reserved=0, type=1 (icon).
+        assert_eq!(&bytes[0..4], &[0, 0, 1, 0]);
+        // Entry count.
+        assert_eq!(u16::from_le_bytes([bytes[4], bytes[5]]), sizes.len() as u16);
+        // First entry width byte (offset 6) = 16.
+        assert_eq!(bytes[6], 16);
+        // 256 is encoded as 0 in the last entry's width byte.
+        let last = 6 + 16 * (sizes.len() - 1);
+        assert_eq!(bytes[last], 0);
     }
 }
