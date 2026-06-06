@@ -12,6 +12,10 @@ open the Win+Tab view. DeskTag puts a small always-on-top pill on screen that
 displays the current desktop's number and name, and updates the moment you
 switch desktops. Build it once, leave it running.
 
+<p align="center">
+  <img src="assets/screenshots/badge.png" alt="DeskTag badge showing &quot;2 · Virtual desktop&quot; pinned at the top of the Windows desktop" width="760">
+</p>
+
 ## Features
 
 - **Always visible.** A compact pill stays on top across every virtual desktop.
@@ -24,6 +28,15 @@ switch desktops. Build it once, leave it running.
 - **Live tray icon.** Mirrors the current desktop; right-click for the menu.
 - **Tiny & native.** A single ~680 KB binary — pure Rust + Win32, no runtime
   dependencies.
+
+## Screenshots
+
+| Light theme | Tray menu |
+| :---------: | :-------: |
+| ![DeskTag badge on a light-themed desktop](assets/screenshots/light-theme.png) | ![Tray menu with the Position submenu open](assets/screenshots/tray-menu.png) |
+
+The badge follows the Windows light/dark theme automatically. Double-click it to
+rename the current desktop; right-click the tray icon to reposition it or quit.
 
 ## Install
 
