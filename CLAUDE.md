@@ -16,6 +16,11 @@ cargo clippy            # lint
 Run the built binary: `desktag.exe` (daemon; quit via tray icon) or
 `desktag.exe --once`.
 
+A git **pre-commit** hook (via `cargo-husky`, dev-dependency) blocks commits on
+`cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, or `cargo test`
+failures. It self-installs into `.git/hooks/` the first time you run `cargo test`.
+Bypass deliberately with `git commit --no-verify`.
+
 ## Architecture
 
 Single binary, six modules under `src/`:
@@ -83,6 +88,12 @@ re-reads the label, repaints, and rebuilds the tray icon.
   (`IDI_APPLICATION`) is shared and is never destroyed (cell stays null).
 - **Naming:** the folder/README say "DeskTag" but the crate and binary are
   `desktag` (lowercase); the window class is `DeskTagBadgeClass`.
+- **Pre-commit hook installs via `cargo test`.** `cargo-husky` (user-hook mode,
+  `default-features = false`, `features = ["user-hooks"]`) copies
+  `.cargo-husky/hooks/pre-commit` into `.git/hooks/` from its build script, which
+  runs only when dev-dependencies compile — i.e. on `cargo test`, NOT plain
+  `cargo build`. `.gitattributes` pins the hook to LF (MSYS `sh` needs it). Fresh
+  clones get the hook on their first `cargo test`.
 
 ## Environment
 
