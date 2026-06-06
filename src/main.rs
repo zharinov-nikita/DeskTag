@@ -16,6 +16,25 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 fn main() -> anyhow::Result<()> {
+    if let Some(pos) = std::env::args().position(|a| a == "--gen-icon") {
+        unsafe {
+            let _ = AttachConsole(ATTACH_PARENT_PROCESS);
+        }
+        let path = std::env::args()
+            .nth(pos + 1)
+            .unwrap_or_else(|| "assets/desktag.ico".to_string());
+        match icon::write_ico(&path, "D") {
+            Ok(()) => {
+                println!("wrote {path}");
+                return Ok(());
+            }
+            Err(e) => {
+                eprintln!("FAILED: {e:?}");
+                std::process::exit(1);
+            }
+        }
+    }
+
     if std::env::args().any(|a| a == "--once") {
         unsafe {
             let _ = AttachConsole(ATTACH_PARENT_PROCESS);
