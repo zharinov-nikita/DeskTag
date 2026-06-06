@@ -70,7 +70,7 @@
 
         <Package Id='*'
             Keywords='Installer'
-            Description='Always-on-top badge showing the current Windows 11 virtual desktop name'
+            Description='Always-on-top badge showing your current Windows 11 virtual desktop name — never lose track of which desktop you&apos;re on'
             Manufacturer='zharinov-nikita'
             InstallerVersion='450'
             Languages='1033'
@@ -146,7 +146,7 @@
             <Component Id='ApplicationShortcut' Guid='*'>
                 <Shortcut Id='AppStartMenuShortcut'
                           Name='DeskTag'
-                          Description='Show the current virtual desktop name'
+                          Description='See which Windows 11 virtual desktop you&apos;re on'
                           Target='[#exe0]'
                           WorkingDirectory='APPLICATIONFOLDER'
                           Icon='ProductICO'/>
