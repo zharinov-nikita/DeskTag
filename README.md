@@ -13,7 +13,7 @@ displays the current desktop's number and name, and updates the moment you
 switch desktops. Build it once, leave it running.
 
 <p align="center">
-  <img src="assets/screenshots/badge.png" alt="DeskTag badge showing &quot;2 · Virtual desktop&quot; pinned at the top of the Windows desktop" width="760">
+  <img src="assets/screenshots/demo.gif" alt="DeskTag badge in action: moving it, renaming the desktop, and switching desktops" width="760">
 </p>
 
 ## Features
@@ -31,9 +31,9 @@ switch desktops. Build it once, leave it running.
 
 ## Screenshots
 
-| Light theme | Tray menu |
-| :---------: | :-------: |
-| ![DeskTag badge on a light-themed desktop](assets/screenshots/light-theme.png) | ![Tray menu with the Position submenu open](assets/screenshots/tray-menu.png) |
+| Dark theme | Light theme | Tray menu |
+| :--------: | :---------: | :-------: |
+| ![DeskTag badge on a dark-themed desktop](assets/screenshots/badge.png) | ![DeskTag badge on a light-themed desktop](assets/screenshots/light-theme.png) | ![Tray menu with the Position submenu open](assets/screenshots/tray-menu.png) |
 
 The badge follows the Windows light/dark theme automatically. Double-click it to
 rename the current desktop; right-click the tray icon to reposition it or quit.
