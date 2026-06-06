@@ -41,6 +41,7 @@ pub fn create(initial: &str) -> Result<HWND> {
 
         let wc = WNDCLASSEXW {
             cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
+            style: CS_DBLCLKS,
             lpfnWndProc: Some(wndproc),
             hInstance: hinstance.into(),
             lpszClassName: class_name,
@@ -80,7 +81,11 @@ pub fn create(initial: &str) -> Result<HWND> {
         // owner comment above), not here. WS_EX_NOACTIVATE is never used: the badge
         // already never activates — it is shown with SW_SHOWNOACTIVATE, moved with
         // SWP_NOACTIVATE, and WS_EX_TRANSPARENT passes clicks through.
-        let ex_style = WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST;
+        // Drop WS_EX_TRANSPARENT so the badge receives mouse clicks (needed to
+        // start an inline rename on double-click). To avoid stealing focus on
+        // ordinary clicks, WS_EX_NOACTIVATE is added later in hide_from_alt_tab
+        // (post-pin, like WS_EX_TOOLWINDOW).
+        let ex_style = WS_EX_LAYERED | WS_EX_TOPMOST;
 
         let hwnd = CreateWindowExW(
             ex_style,
@@ -124,16 +129,23 @@ pub fn reassert_topmost(hwnd: HWND) {
     }
 }
 
-/// Drop the badge out of the Alt-Tab switcher by adding WS_EX_TOOLWINDOW.
+/// Drop the badge out of the Alt-Tab switcher (WS_EX_TOOLWINDOW) and stop it
+/// stealing focus on clicks (WS_EX_NOACTIVATE).
 ///
 /// Call this AFTER the window has been pinned to all desktops: pinning registers
 /// a shell application view, and an app-view window shows up in Alt-Tab even when
 /// it is owned. WS_EX_TOOLWINDOW removes it from the switcher; the already-pinned
 /// app view survives the late style change, so the badge stays on every desktop.
+/// WS_EX_NOACTIVATE is added here too (post-pin) so the now click-receiving badge
+/// does not steal foreground focus on ordinary clicks.
 pub fn hide_from_alt_tab(hwnd: HWND) {
     unsafe {
         let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
-        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex | WS_EX_TOOLWINDOW.0 as isize);
+        SetWindowLongPtrW(
+            hwnd,
+            GWL_EXSTYLE,
+            ex | WS_EX_TOOLWINDOW.0 as isize | WS_EX_NOACTIVATE.0 as isize,
+        );
         // Commit the style change so the frame/switcher state is refreshed.
         let _ = SetWindowPos(
             hwnd,
