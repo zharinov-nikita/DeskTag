@@ -1,0 +1,49 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-msi:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install WiX Toolset v3
+        shell: pwsh
+        run: |
+          choco install wixtoolset --no-progress -y
+          $wixBin = (Get-ChildItem 'C:\Program Files (x86)\WiX Toolset*\bin' -Directory | Select-Object -First 1).FullName
+          Write-Output "WiX bin: $wixBin"
+          Add-Content -Path $env:GITHUB_PATH -Value $wixBin
+
+      - name: Install cargo-wix
+        run: cargo install cargo-wix
+
+      # cargo-wix 0.3.x auto-loads WixUtilExtension into candle AND light;
+      # passing -ext explicitly causes a duplicate-extension error, so we do not.
+      - name: Build MSI (also builds the release binary)
+        run: cargo wix --nocapture
+
+      - name: Collect artifacts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item target\release\desktag.exe dist\
+          Copy-Item target\wix\*.msi dist\
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/desktag.exe
+            dist/*.msi
