@@ -13,7 +13,7 @@ use windows::Win32::UI::Shell::{
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetKeyState, SetFocus, VIRTUAL_KEY, VK_CONTROL, VK_DELETE, VK_END, VK_ESCAPE, VK_HOME, VK_LEFT,
-    VK_RETURN, VK_RIGHT,
+    VK_RETURN, VK_RIGHT, VK_SHIFT,
 };
 use windows::Win32::UI::WindowsAndMessaging::*;
 
@@ -387,14 +387,21 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
                     let _ = GetTextExtentPoint32W(hdc, &utf16, &mut tsz);
                     let tx = (rc.right - tsz.cx) / 2;
                     let ty = (rc.bottom - tsz.cy) / 2;
-                    let selected = EDIT.with(|e| {
-                        e.borrow().as_ref().map(|s| s.is_selected()).unwrap_or(false)
-                    });
-                    if selected {
+                    if let Some((lo, hi)) =
+                        EDIT.with(|e| e.borrow().as_ref().and_then(|s| s.selection()))
+                    {
+                        // Width of the text before the selection and of the
+                        // selection itself, to place the highlight rect.
+                        let pre: Vec<u16> = text[..lo].encode_utf16().collect();
+                        let mut pre_sz = SIZE::default();
+                        let _ = GetTextExtentPoint32W(hdc, &pre, &mut pre_sz);
+                        let mid: Vec<u16> = text[lo..hi].encode_utf16().collect();
+                        let mut mid_sz = SIZE::default();
+                        let _ = GetTextExtentPoint32W(hdc, &mid, &mut mid_sz);
                         let sel = RECT {
-                            left: tx,
+                            left: tx + pre_sz.cx,
                             top: ty,
-                            right: tx + tsz.cx,
+                            right: tx + pre_sz.cx + mid_sz.cx,
                             bottom: ty + tsz.cy,
                         };
                         let brush = CreateSolidBrush(SEL_COLOR);
@@ -418,7 +425,7 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
                     EDIT.with(|e| {
                         if let Some(s) = e.borrow().as_ref() {
                             // A visible selection is the indicator; hide the caret.
-                            if s.is_selected() && !s.text().is_empty() {
+                            if s.selection().is_some() {
                                 return;
                             }
                             let full: Vec<u16> = s.text().encode_utf16().collect();
@@ -526,17 +533,27 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
             WM_KEYDOWN => {
                 if is_editing() {
                     let vk = VIRTUAL_KEY(wparam.0 as u16);
+                    let shift = GetKeyState(VK_SHIFT.0 as i32) < 0;
+                    let ctrl = GetKeyState(VK_CONTROL.0 as i32) < 0;
                     match vk {
                         VK_RETURN => commit_edit(hwnd),
                         VK_ESCAPE => cancel_edit(hwnd),
                         VK_LEFT | VK_RIGHT | VK_HOME | VK_END => {
                             EDIT.with(|e| {
                                 if let Some(s) = e.borrow_mut().as_mut() {
-                                    match vk {
-                                        VK_LEFT => s.move_left(),
-                                        VK_RIGHT => s.move_right(),
-                                        VK_HOME => s.home(),
-                                        VK_END => s.end(),
+                                    match (vk, shift, ctrl) {
+                                        (VK_LEFT, false, false) => s.move_left(),
+                                        (VK_LEFT, false, true) => s.move_word_left(),
+                                        (VK_LEFT, true, false) => s.extend_left(),
+                                        (VK_LEFT, true, true) => s.extend_word_left(),
+                                        (VK_RIGHT, false, false) => s.move_right(),
+                                        (VK_RIGHT, false, true) => s.move_word_right(),
+                                        (VK_RIGHT, true, false) => s.extend_right(),
+                                        (VK_RIGHT, true, true) => s.extend_word_right(),
+                                        (VK_HOME, false, _) => s.home(),
+                                        (VK_HOME, true, _) => s.extend_home(),
+                                        (VK_END, false, _) => s.end(),
+                                        (VK_END, true, _) => s.extend_end(),
                                         _ => {}
                                     }
                                 }
@@ -545,18 +562,19 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
                             let _ = InvalidateRect(hwnd, None, BOOL(1));
                         }
                         VK_DELETE => {
-                            // Ctrl+Delete clears all (plain Delete is a no-op for
-                            // now — no caret movement, see spec non-goals).
-                            let ctrl = GetKeyState(VK_CONTROL.0 as i32) < 0;
-                            if ctrl {
-                                EDIT.with(|e| {
-                                    if let Some(s) = e.borrow_mut().as_mut() {
+                            // Ctrl+Delete clears all; plain Delete removes the
+                            // selection or the char after the caret.
+                            EDIT.with(|e| {
+                                if let Some(s) = e.borrow_mut().as_mut() {
+                                    if ctrl {
                                         s.clear();
+                                    } else {
+                                        s.delete();
                                     }
-                                });
-                                resize_and_position(hwnd);
-                                let _ = InvalidateRect(hwnd, None, BOOL(1));
-                            }
+                                }
+                            });
+                            resize_and_position(hwnd);
+                            let _ = InvalidateRect(hwnd, None, BOOL(1));
                         }
                         _ => {}
                     }
