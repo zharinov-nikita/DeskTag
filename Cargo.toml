@@ -22,3 +22,6 @@ features = [
     "Win32_System_LibraryLoader",
     "Win32_System_Console",
 ]
+
+[build-dependencies]
+winresource = "0.1"
