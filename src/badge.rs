@@ -14,6 +14,8 @@ use windows::Win32::UI::Shell::{
 };
 use windows::Win32::UI::WindowsAndMessaging::*;
 
+use crate::theme::{Palette, Theme};
+
 /// Posted (from the listener thread) when the current desktop or its name changes.
 pub const WM_APP_DESKTOP_CHANGED: u32 = WM_APP + 1;
 
@@ -25,19 +27,20 @@ const TIMER_TOPMOST: usize = 1;
 const TIMER_POLL: usize = 2;
 
 // COLORREF is 0x00BBGGRR.
-const BG_COLOR: COLORREF = COLORREF(0x0020_2020); // dark gray
-const TEXT_COLOR: COLORREF = COLORREF(0x00F0_F0F0); // near white
 const ALPHA: u8 = 220;
 
 thread_local! {
     static LABEL: RefCell<String> = RefCell::new(String::from("Desktop ?"));
     /// The tray HICON we currently own (null = none / using a shared fallback).
     static CURRENT_TRAY_ICON: Cell<HICON> = const { Cell::new(HICON(std::ptr::null_mut())) };
+    /// The system theme we last painted with. Updated on WM_SETTINGCHANGE.
+    static CURRENT_THEME: Cell<Theme> = const { Cell::new(Theme::Dark) };
 }
 
 /// Create and show the badge window. Returns its HWND.
 pub fn create(initial: &str) -> Result<HWND> {
     LABEL.with(|l| *l.borrow_mut() = initial.to_string());
+    CURRENT_THEME.with(|t| t.set(crate::theme::detect()));
     unsafe {
         let hinstance = GetModuleHandleW(None).map_err(|e| anyhow!("GetModuleHandleW: {e:?}"))?;
         let class_name = w!("DeskTagBadgeClass");
@@ -170,6 +173,11 @@ pub fn apply_label(hwnd: HWND, text: &str) {
 fn scale(hwnd: HWND, v: i32) -> i32 {
     let dpi = unsafe { GetDpiForWindow(hwnd) }.max(96);
     v * dpi as i32 / 96
+}
+
+/// The palette for the theme we currently believe is active (UI thread only).
+fn current_palette() -> Palette {
+    Palette::for_theme(CURRENT_THEME.with(|t| t.get()))
 }
 
 unsafe fn make_font(hwnd: HWND) -> HFONT {
@@ -325,14 +333,16 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
                 let mut rc = RECT::default();
                 let _ = GetClientRect(hwnd, &mut rc);
 
-                let brush = CreateSolidBrush(BG_COLOR);
+                let p = current_palette();
+
+                let brush = CreateSolidBrush(p.bg);
                 FillRect(hdc, &rc, brush);
                 let _ = DeleteObject(brush);
 
                 let font = make_font(hwnd);
                 let old = SelectObject(hdc, font);
                 SetBkMode(hdc, TRANSPARENT);
-                SetTextColor(hdc, TEXT_COLOR);
+                SetTextColor(hdc, p.text);
                 LABEL.with(|l| {
                     let mut text: Vec<u16> = l.borrow().encode_utf16().collect();
                     let _ = DrawTextW(
@@ -344,6 +354,16 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
                 });
                 SelectObject(hdc, old);
                 let _ = DeleteObject(font);
+
+                // Hairline border: frame the rounded region from the inside so
+                // the (DPI-scaled) 1px line is not clipped by the window region.
+                let radius = scale(hwnd, 16);
+                let rgn = CreateRoundRectRgn(0, 0, rc.right + 1, rc.bottom + 1, radius, radius);
+                let border_brush = CreateSolidBrush(p.border);
+                let t = scale(hwnd, 1).max(1);
+                let _ = FrameRgn(hdc, rgn, border_brush, t, t);
+                let _ = DeleteObject(border_brush);
+                let _ = DeleteObject(rgn);
 
                 let _ = EndPaint(hwnd, &ps);
                 LRESULT(0)
