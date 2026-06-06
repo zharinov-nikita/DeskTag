@@ -224,6 +224,9 @@ fn is_editing() -> bool {
 unsafe fn measure(hwnd: HWND) -> (i32, i32) {
     let pad_x = scale(hwnd, 14);
     let pad_y = scale(hwnd, 7);
+    // Keep the pill a comfortable size even when the text is empty (renaming an
+    // unnamed desktop) or very short — otherwise it collapses to a tiny nub.
+    let min_w = scale(hwnd, 72);
     let hdc = GetDC(hwnd);
     let font = make_font(hwnd);
     let old = SelectObject(hdc, font);
@@ -232,10 +235,16 @@ unsafe fn measure(hwnd: HWND) -> (i32, i32) {
         let utf16: Vec<u16> = text.encode_utf16().collect();
         let _ = GetTextExtentPoint32W(hdc, &utf16, &mut size);
     });
+    // Height from a reference glyph so an empty buffer keeps the full pill
+    // height (an empty string measures 0 tall).
+    let mut ref_sz = SIZE::default();
+    let _ = GetTextExtentPoint32W(hdc, &[0x41u16], &mut ref_sz);
     SelectObject(hdc, old);
     let _ = DeleteObject(font);
     ReleaseDC(hwnd, hdc);
-    (size.cx + pad_x * 2, size.cy + pad_y * 2)
+    let w = (size.cx + pad_x * 2).max(min_w);
+    let h = ref_sz.cy.max(size.cy) + pad_y * 2;
+    (w, h)
 }
 
 unsafe fn resize_and_position(hwnd: HWND) {
