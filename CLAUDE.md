@@ -33,8 +33,9 @@ Single binary, five modules under `src/`:
   event-listener thread.
 - `label.rs` — pure `format_label(index, name)`. OS-independent; unit-tested
   alongside `edit.rs`.
-- `edit.rs` — pure `EditState` (buffer + caret) for inline rename mode.
-  OS-independent; unit-tested.
+- `edit.rs` — pure `EditState` (buffer, caret, `anchor`-based selection) for
+  inline rename mode: char/word caret movement, range selection (Shift/Ctrl),
+  insert/delete/replace. OS-independent; unit-tested.
 
 Desktop change -> listener thread posts `WM_APP_DESKTOP_CHANGED` -> `wndproc`
 re-reads the label and repaints.
