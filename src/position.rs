@@ -138,6 +138,29 @@ pub fn parse(s: &str) -> Position {
     }
 }
 
+/// Top-left origin for `anchor` inside `work`, for a pill of `size`
+/// (width, height), inset by `margin` at the edges.
+pub fn anchor_origin(anchor: Anchor, work: Rect, size: (i32, i32), margin: i32) -> (i32, i32) {
+    let (w, h) = size;
+    let left = work.left + margin;
+    let right = work.right - w - margin;
+    let cx = work.left + (work.width() - w) / 2;
+    let top = work.top + margin;
+    let bottom = work.bottom - h - margin;
+    let cy = work.top + (work.height() - h) / 2;
+    match anchor {
+        Anchor::TopLeft => (left, top),
+        Anchor::TopCenter => (cx, top),
+        Anchor::TopRight => (right, top),
+        Anchor::MidLeft => (left, cy),
+        Anchor::Center => (cx, cy),
+        Anchor::MidRight => (right, cy),
+        Anchor::BottomLeft => (left, bottom),
+        Anchor::BottomCenter => (cx, bottom),
+        Anchor::BottomRight => (right, bottom),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -193,5 +216,36 @@ mod tests {
     #[test]
     fn parse_custom_nonnumeric_is_default() {
         assert_eq!(parse("mode=custom\nx=abc\ny=def"), Position::default());
+    }
+
+    fn work() -> Rect {
+        Rect::new(0, 0, 1000, 600)
+    }
+    const SIZE: (i32, i32) = (100, 40);
+    const M: i32 = 10;
+
+    #[test]
+    fn anchor_corners() {
+        assert_eq!(anchor_origin(Anchor::TopLeft, work(), SIZE, M), (10, 10));
+        assert_eq!(anchor_origin(Anchor::TopRight, work(), SIZE, M), (890, 10));
+        assert_eq!(anchor_origin(Anchor::BottomLeft, work(), SIZE, M), (10, 550));
+        assert_eq!(anchor_origin(Anchor::BottomRight, work(), SIZE, M), (890, 550));
+    }
+
+    #[test]
+    fn anchor_edges_and_center() {
+        assert_eq!(anchor_origin(Anchor::TopCenter, work(), SIZE, M), (450, 10));
+        assert_eq!(anchor_origin(Anchor::BottomCenter, work(), SIZE, M), (450, 550));
+        assert_eq!(anchor_origin(Anchor::MidLeft, work(), SIZE, M), (10, 280));
+        assert_eq!(anchor_origin(Anchor::MidRight, work(), SIZE, M), (890, 280));
+        assert_eq!(anchor_origin(Anchor::Center, work(), SIZE, M), (450, 280));
+    }
+
+    #[test]
+    fn anchor_respects_work_offset() {
+        // Work area not at the origin (taskbar inset / secondary monitor).
+        let w = Rect::new(100, 50, 1100, 650);
+        assert_eq!(anchor_origin(Anchor::TopLeft, w, SIZE, M), (110, 60));
+        assert_eq!(anchor_origin(Anchor::BottomRight, w, SIZE, M), (990, 600));
     }
 }
