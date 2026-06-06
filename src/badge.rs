@@ -3,7 +3,7 @@
 
 use anyhow::{anyhow, Result};
 use std::cell::{Cell, RefCell};
-use windows::core::w;
+use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{BOOL, COLORREF, HWND, LPARAM, LRESULT, RECT, SIZE, WPARAM};
 use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -27,6 +27,7 @@ pub const WM_APP_DESKTOP_CHANGED: u32 = WM_APP + 1;
 const WM_APP_TRAY: u32 = WM_APP + 2;
 const TRAY_UID: u32 = 1;
 const MENU_QUIT: usize = 1001;
+const MENU_POS_BASE: usize = 2000; // 2000..2008 -> Anchor::ALL
 const TIMER_TOPMOST: usize = 1;
 const TIMER_POLL: usize = 2;
 const TIMER_CARET: usize = 3;
@@ -393,9 +394,29 @@ unsafe fn remove_tray(hwnd: HWND) {
     }
 }
 
+/// Null-terminated UTF-16 for a dynamic menu label.
+fn to_w(s: &str) -> Vec<u16> {
+    s.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
 unsafe fn show_tray_menu(hwnd: HWND) {
     let menu = CreatePopupMenu().unwrap_or_default();
+    let submenu = CreatePopupMenu().unwrap_or_default();
+
+    let current = POSITION.with(|p| *p.borrow());
+    for (i, a) in Anchor::ALL.iter().enumerate() {
+        let mut flags = MF_STRING;
+        if matches!(current, Position::Anchor(c) if c == *a) {
+            flags |= MF_CHECKED;
+        }
+        let label = to_w(a.label());
+        let _ = AppendMenuW(submenu, flags, MENU_POS_BASE + i, PCWSTR(label.as_ptr()));
+    }
+
+    // Popup item owns the submenu; DestroyMenu(menu) frees both.
+    let _ = AppendMenuW(menu, MF_POPUP, submenu.0 as usize, w!("Position"));
     let _ = AppendMenuW(menu, MF_STRING, MENU_QUIT, w!("Quit"));
+
     let mut pt = windows::Win32::Foundation::POINT::default();
     let _ = GetCursorPos(&mut pt);
     // Required so the menu closes when focus is lost.
@@ -571,9 +592,15 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
                 LRESULT(0)
             }
             WM_COMMAND => {
-                if (wparam.0 & 0xFFFF) == MENU_QUIT {
+                let id = wparam.0 & 0xFFFF;
+                if id == MENU_QUIT {
                     remove_tray(hwnd);
                     PostQuitMessage(0);
+                } else if (MENU_POS_BASE..MENU_POS_BASE + Anchor::ALL.len()).contains(&id) {
+                    let pos = Position::Anchor(Anchor::ALL[id - MENU_POS_BASE]);
+                    POSITION.with(|p| *p.borrow_mut() = pos);
+                    crate::config::save(&pos);
+                    resize_and_position(hwnd);
                 }
                 LRESULT(0)
             }
