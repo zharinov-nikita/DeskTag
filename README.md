@@ -1,4 +1,4 @@
-# fast-blazing-virtual-desktop (fbvd)
+# DeskTag
 
 Always-on-top badge showing the name of your current Windows 11 virtual desktop,
 visible on every desktop. Build it once, leave it running.
@@ -12,15 +12,15 @@ visible on every desktop. Build it once, leave it running.
 
     cargo build --release
 
-The binary is `target/release/fbvd.exe`.
+The binary is `target/release/desktag.exe`.
 
 ## Run
 
-- `fbvd.exe` — start the badge (background; quit via the tray icon).
-- `fbvd.exe --once` — print the current desktop label and exit.
+- `desktag.exe` — start the badge (background; quit via the tray icon).
+- `desktag.exe --once` — print the current desktop label and exit.
 
 Rename desktops in the native Win+Tab view; the badge reflects the name.
 
 ## Autostart (optional)
 
-Press Win+R, type `shell:startup`, and drop a shortcut to `fbvd.exe` there.
+Press Win+R, type `shell:startup`, and drop a shortcut to `desktag.exe` there.

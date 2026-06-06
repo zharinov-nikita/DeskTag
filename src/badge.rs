@@ -37,7 +37,7 @@ pub fn create(initial: &str) -> Result<HWND> {
     LABEL.with(|l| *l.borrow_mut() = initial.to_string());
     unsafe {
         let hinstance = GetModuleHandleW(None).map_err(|e| anyhow!("GetModuleHandleW: {e:?}"))?;
-        let class_name = w!("FbvdBadgeClass");
+        let class_name = w!("DeskTagBadgeClass");
 
         let wc = WNDCLASSEXW {
             cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
@@ -60,7 +60,7 @@ pub fn create(initial: &str) -> Result<HWND> {
         let owner = CreateWindowExW(
             WINDOW_EX_STYLE(0),
             class_name,
-            w!("fbvd-owner"),
+            w!("DeskTag-owner"),
             WS_POPUP,
             0,
             0,
@@ -81,7 +81,7 @@ pub fn create(initial: &str) -> Result<HWND> {
         let hwnd = CreateWindowExW(
             ex_style,
             class_name,
-            w!("fbvd"),
+            w!("DeskTag"),
             WS_POPUP,
             0,
             0,
@@ -203,8 +203,8 @@ pub fn install_tray(hwnd: HWND) {
             hIcon: hicon,
             ..Default::default()
         };
-        // szTip: copy "fbvd" into the fixed [u16; 128] buffer.
-        for (i, c) in "fbvd".encode_utf16().enumerate() {
+        // szTip: copy "DeskTag" into the fixed [u16; 128] buffer.
+        for (i, c) in "DeskTag".encode_utf16().enumerate() {
             nid.szTip[i] = c;
         }
         let _ = Shell_NotifyIconW(NIM_ADD, &nid);
