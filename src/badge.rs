@@ -8,13 +8,13 @@ use windows::Win32::Foundation::{BOOL, COLORREF, HWND, LPARAM, LRESULT, RECT, SI
 use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
-use windows::Win32::UI::Shell::{
-    Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY,
-    NOTIFYICONDATAW,
-};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetKeyState, ReleaseCapture, SetCapture, SetFocus, VIRTUAL_KEY, VK_CONTROL, VK_DELETE, VK_END,
     VK_ESCAPE, VK_HOME, VK_LEFT, VK_RETURN, VK_RIGHT, VK_SHIFT,
+};
+use windows::Win32::UI::Shell::{
+    Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY,
+    NOTIFYICONDATAW,
 };
 use windows::Win32::UI::WindowsAndMessaging::*;
 
@@ -287,7 +287,12 @@ unsafe fn primary_work_area() -> position::Rect {
     if ok && rc.right > rc.left && rc.bottom > rc.top {
         position::Rect::new(rc.left, rc.top, rc.right, rc.bottom)
     } else {
-        position::Rect::new(0, 0, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN))
+        position::Rect::new(
+            0,
+            0,
+            GetSystemMetrics(SM_CXSCREEN),
+            GetSystemMetrics(SM_CYSCREEN),
+        )
     }
 }
 
@@ -301,7 +306,12 @@ unsafe fn virtual_bounds() -> position::Rect {
     if w > 0 && h > 0 {
         position::Rect::new(x, y, x + w, y + h)
     } else {
-        position::Rect::new(0, 0, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN))
+        position::Rect::new(
+            0,
+            0,
+            GetSystemMetrics(SM_CXSCREEN),
+            GetSystemMetrics(SM_CYSCREEN),
+        )
     }
 }
 
@@ -645,6 +655,19 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
                 resize_and_position(hwnd);
                 LRESULT(0)
             }
+            WM_DISPLAYCHANGE => {
+                // Resolution / monitor add/remove: re-anchor or re-clamp.
+                resize_and_position(hwnd);
+                LRESULT(0)
+            }
+            WM_SETTINGCHANGE => {
+                // Only react to work-area changes (taskbar moved/resized), not
+                // every system-setting broadcast.
+                if wparam.0 as u32 == SPI_SETWORKAREA.0 {
+                    resize_and_position(hwnd);
+                }
+                LRESULT(0)
+            }
             WM_LBUTTONDOWN => {
                 // Drag only in display mode; while renaming, clicks are for text.
                 if !is_editing() {
@@ -700,7 +723,10 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
                     if st.dragging {
                         let mut rc = RECT::default();
                         let _ = GetWindowRect(hwnd, &mut rc);
-                        let pos = Position::Custom { x: rc.left, y: rc.top };
+                        let pos = Position::Custom {
+                            x: rc.left,
+                            y: rc.top,
+                        };
                         POSITION.with(|p| *p.borrow_mut() = pos);
                         crate::config::save(&pos);
                     }
@@ -723,8 +749,8 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
                         if let Some(s) = e.borrow_mut().as_mut() {
                             match code {
                                 0x08 => s.backspace(),  // Backspace
-                                0x7F => s.clear(),       // Ctrl+Backspace -> clear all
-                                0x01 => s.select_all(),  // Ctrl+A -> select all
+                                0x7F => s.clear(),      // Ctrl+Backspace -> clear all
+                                0x01 => s.select_all(), // Ctrl+A -> select all
                                 _ => {
                                     if let Some(c) = char::from_u32(code) {
                                         // Enter/Esc are control chars (WM_KEYDOWN).
