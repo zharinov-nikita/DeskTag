@@ -6,6 +6,7 @@ use std::ffi::c_void;
 use windows::core::w;
 use windows::Win32::Foundation::{COLORREF, RECT, SIZE};
 use windows::Win32::Graphics::Gdi::*;
+use windows::Win32::UI::WindowsAndMessaging::{CreateIconIndirect, HICON, ICONINFO};
 
 // Pill palette — keep in sync with badge.rs (window pill uses the same colors).
 const BG: COLORREF = COLORREF(0x0020_2020); // 0x00BBGGRR, dark gray
@@ -122,6 +123,67 @@ unsafe fn make_icon_font(hdc: HDC, text: &str, size: u32) -> HFONT {
     }
 }
 
+/// Build a tray-sized HICON showing `text`. The caller owns it and must
+/// `DestroyIcon` it when it is replaced or on teardown.
+pub fn make_tray_hicon(text: &str, size: u32) -> Result<HICON> {
+    let rgba = rasterize(text, size)?;
+    let s = size as i32;
+    unsafe {
+        // Color bitmap: 32-bpp top-down DIB filled from RGBA (stored as BGRA).
+        let bmi = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                biWidth: s,
+                biHeight: -s,
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: BI_RGB.0,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let screen = GetDC(None);
+        let mut bits: *mut c_void = std::ptr::null_mut();
+        let color = CreateDIBSection(screen, &bmi, DIB_RGB_COLORS, &mut bits, None, 0)
+            .map_err(|e| anyhow!("CreateDIBSection(color): {e:?}"))?;
+        ReleaseDC(None, screen);
+
+        let dst = std::slice::from_raw_parts_mut(bits as *mut u8, rgba.len());
+        for i in (0..rgba.len()).step_by(4) {
+            dst[i] = rgba[i + 2]; // B
+            dst[i + 1] = rgba[i + 1]; // G
+            dst[i + 2] = rgba[i]; // R
+            dst[i + 3] = rgba[i + 3]; // A
+        }
+
+        // 1-bpp AND mask: 1 = transparent (alpha 0), 0 = opaque.
+        // CreateBitmap rows are WORD-aligned.
+        let stride = (((s + 15) / 16) * 2) as usize;
+        let mut maskbits = vec![0u8; stride * s as usize];
+        for y in 0..s as usize {
+            for x in 0..s as usize {
+                if rgba[(y * s as usize + x) * 4 + 3] == 0 {
+                    maskbits[y * stride + (x >> 3)] |= 0x80 >> (x & 7);
+                }
+            }
+        }
+        let mask = CreateBitmap(s, s, 1, 1, Some(maskbits.as_ptr() as *const c_void));
+
+        let ii = ICONINFO {
+            fIcon: true.into(),
+            xHotspot: 0,
+            yHotspot: 0,
+            hbmMask: mask,
+            hbmColor: color,
+        };
+        let icon = CreateIconIndirect(&ii).map_err(|e| anyhow!("CreateIconIndirect: {e:?}"))?;
+        // CreateIconIndirect copies the bitmaps; free our originals.
+        let _ = DeleteObject(color);
+        let _ = DeleteObject(mask);
+        Ok(icon)
+    }
+}
+
 #[cfg(test)]
 #[cfg(windows)]
 mod tests {
@@ -135,5 +197,14 @@ mod tests {
         // Pill body is opaque somewhere, corners are transparent somewhere.
         assert!(rgba.chunks(4).any(|p| p[3] == 255), "expected opaque pixels");
         assert!(rgba.chunks(4).any(|p| p[3] == 0), "expected transparent corners");
+    }
+
+    #[test]
+    fn make_tray_hicon_returns_icon() {
+        let icon = make_tray_hicon("2", 32).unwrap();
+        assert!(!icon.is_invalid());
+        unsafe {
+            let _ = windows::Win32::UI::WindowsAndMessaging::DestroyIcon(icon);
+        }
     }
 }
