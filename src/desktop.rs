@@ -21,6 +21,22 @@ pub fn current_label() -> Result<String> {
     Ok(format_label(index, &name))
 }
 
+/// The current desktop's raw name (may be empty), without label formatting.
+pub fn current_name() -> Result<String> {
+    let (_index, name) = current_index_and_name()?;
+    Ok(name)
+}
+
+/// Rename the current virtual desktop. An empty string clears the name; the
+/// badge then shows "Desktop N" via `format_label`.
+pub fn rename_current(name: &str) -> Result<()> {
+    let desktop =
+        winvd::get_current_desktop().map_err(|e| anyhow!("get_current_desktop: {e:?}"))?;
+    desktop
+        .set_name(name)
+        .map_err(|e| anyhow!("set_name: {e:?}"))
+}
+
 use windows::Win32::Foundation::HWND;
 
 /// Pin a window so it appears on every virtual desktop. Best-effort.
@@ -39,8 +55,8 @@ pub fn start_listener(hwnd: HWND) -> Result<winvd::DesktopEventThread> {
     use winvd::DesktopEvent;
 
     let (tx, rx) = std::sync::mpsc::channel::<DesktopEvent>();
-    let guard = winvd::listen_desktop_events(tx)
-        .map_err(|e| anyhow!("listen_desktop_events: {e:?}"))?;
+    let guard =
+        winvd::listen_desktop_events(tx).map_err(|e| anyhow!("listen_desktop_events: {e:?}"))?;
 
     // HWND is not Send; pass the raw pointer as isize and rebuild it in the thread.
     let hwnd_raw = hwnd.0 as isize;

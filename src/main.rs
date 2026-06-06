@@ -2,6 +2,7 @@
 
 mod badge;
 mod desktop;
+mod edit;
 mod icon;
 mod label;
 mod theme;
