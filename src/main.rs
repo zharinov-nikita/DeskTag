@@ -1,6 +1,7 @@
 #![windows_subsystem = "windows"]
 
 mod badge;
+mod config;
 mod desktop;
 mod edit;
 mod icon;
