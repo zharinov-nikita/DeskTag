@@ -33,9 +33,9 @@ const ALPHA: u8 = 220;
 thread_local! {
     static LABEL: RefCell<String> = RefCell::new(String::from("Desktop ?"));
     // Some(_) while renaming the current desktop inline; None in display mode.
-    static EDIT: RefCell<Option<crate::edit::EditState>> = RefCell::new(None);
+    static EDIT: RefCell<Option<crate::edit::EditState>> = const { RefCell::new(None) };
     // Caret blink phase while editing.
-    static CARET_ON: std::cell::Cell<bool> = std::cell::Cell::new(true);
+    static CARET_ON: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
 }
 
 /// Create and show the badge window. Returns its HWND.
