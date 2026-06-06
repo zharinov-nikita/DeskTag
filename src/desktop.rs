@@ -12,3 +12,11 @@ pub fn current_index_and_name() -> Result<(u32, String)> {
     let name = desktop.get_name().unwrap_or_default();
     Ok((index, name))
 }
+
+use crate::label::format_label;
+
+/// Read the current desktop and return its formatted badge label.
+pub fn current_label() -> Result<String> {
+    let (index, name) = current_index_and_name()?;
+    Ok(format_label(index, &name))
+}

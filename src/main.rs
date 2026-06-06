@@ -5,7 +5,7 @@ fn main() -> anyhow::Result<()> {
     if std::env::args().any(|a| a == "--once") {
         match desktop::current_index_and_name() {
             Ok((index, name)) => {
-                println!("ok: index={index} name={name:?}");
+                println!("{}", label::format_label(index, &name));
             }
             Err(e) => {
                 eprintln!("FAILED: {e:?}");
