@@ -13,8 +13,8 @@ use windows::Win32::UI::Shell::{
     NOTIFYICONDATAW,
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetKeyState, SetFocus, VIRTUAL_KEY, VK_CONTROL, VK_DELETE, VK_END, VK_ESCAPE, VK_HOME, VK_LEFT,
-    VK_RETURN, VK_RIGHT, VK_SHIFT,
+    GetKeyState, ReleaseCapture, SetCapture, SetFocus, VIRTUAL_KEY, VK_CONTROL, VK_DELETE, VK_END,
+    VK_ESCAPE, VK_HOME, VK_LEFT, VK_RETURN, VK_RIGHT, VK_SHIFT,
 };
 use windows::Win32::UI::WindowsAndMessaging::*;
 
@@ -38,6 +38,18 @@ const TEXT_COLOR: COLORREF = COLORREF(0x00F0_F0F0); // near white
 const SEL_COLOR: COLORREF = COLORREF(0x00D4_7800); // selection blue (#0078D4), 0x00BBGGRR
 const ALPHA: u8 = 220;
 
+/// Tracks a left-button drag of the badge. `dragging` flips true once the
+/// cursor crosses the system drag threshold, so a plain click / double-click
+/// (which barely moves) never turns into a move.
+#[derive(Clone, Copy)]
+struct DragState {
+    start_cx: i32,
+    start_cy: i32,
+    origin_x: i32,
+    origin_y: i32,
+    dragging: bool,
+}
+
 thread_local! {
     static LABEL: RefCell<String> = RefCell::new(String::from("Desktop ?"));
     // Some(_) while renaming the current desktop inline; None in display mode.
@@ -49,6 +61,8 @@ thread_local! {
     /// Where the badge sits; loaded from config on create, updated by the tray
     /// Position submenu and by drag-to-move.
     static POSITION: RefCell<Position> = RefCell::new(Position::default());
+    /// In-flight badge drag, or None.
+    static DRAG: Cell<Option<DragState>> = const { Cell::new(None) };
 }
 
 /// Create and show the badge window. Returns its HWND.
@@ -629,6 +643,73 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
             }
             WM_DPICHANGED => {
                 resize_and_position(hwnd);
+                LRESULT(0)
+            }
+            WM_LBUTTONDOWN => {
+                // Drag only in display mode; while renaming, clicks are for text.
+                if !is_editing() {
+                    let mut pt = windows::Win32::Foundation::POINT::default();
+                    let _ = GetCursorPos(&mut pt);
+                    let mut rc = RECT::default();
+                    let _ = GetWindowRect(hwnd, &mut rc);
+                    DRAG.with(|d| {
+                        d.set(Some(DragState {
+                            start_cx: pt.x,
+                            start_cy: pt.y,
+                            origin_x: rc.left,
+                            origin_y: rc.top,
+                            dragging: false,
+                        }))
+                    });
+                    SetCapture(hwnd);
+                }
+                LRESULT(0)
+            }
+            WM_MOUSEMOVE => {
+                DRAG.with(|d| {
+                    if let Some(mut st) = d.get() {
+                        let mut pt = windows::Win32::Foundation::POINT::default();
+                        let _ = GetCursorPos(&mut pt);
+                        let dx = pt.x - st.start_cx;
+                        let dy = pt.y - st.start_cy;
+                        if !st.dragging
+                            && (dx.abs() >= GetSystemMetrics(SM_CXDRAG)
+                                || dy.abs() >= GetSystemMetrics(SM_CYDRAG))
+                        {
+                            st.dragging = true;
+                        }
+                        if st.dragging {
+                            let _ = SetWindowPos(
+                                hwnd,
+                                HWND_TOPMOST,
+                                st.origin_x + dx,
+                                st.origin_y + dy,
+                                0,
+                                0,
+                                SWP_NOSIZE | SWP_NOACTIVATE,
+                            );
+                        }
+                        d.set(Some(st));
+                    }
+                });
+                LRESULT(0)
+            }
+            WM_LBUTTONUP => {
+                if let Some(st) = DRAG.with(|d| d.take()) {
+                    let _ = ReleaseCapture();
+                    if st.dragging {
+                        let mut rc = RECT::default();
+                        let _ = GetWindowRect(hwnd, &mut rc);
+                        let pos = Position::Custom { x: rc.left, y: rc.top };
+                        POSITION.with(|p| *p.borrow_mut() = pos);
+                        crate::config::save(&pos);
+                    }
+                }
+                LRESULT(0)
+            }
+            WM_CAPTURECHANGED => {
+                // Capture yanked away (e.g. menu/alt-tab) — drop the drag.
+                DRAG.with(|d| d.set(None));
                 LRESULT(0)
             }
             WM_LBUTTONDBLCLK => {
