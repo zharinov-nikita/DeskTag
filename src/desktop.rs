@@ -27,3 +27,40 @@ use windows::Win32::Foundation::HWND;
 pub fn pin_to_all_desktops(hwnd: HWND) -> Result<()> {
     winvd::pin_window(hwnd).map_err(|e| anyhow!("pin_window: {e:?}"))
 }
+
+use crate::badge::WM_APP_DESKTOP_CHANGED;
+use windows::Win32::Foundation::{LPARAM, WPARAM};
+use windows::Win32::UI::WindowsAndMessaging::PostMessageW;
+
+/// Start the winvd event listener. On any desktop-structure change it posts
+/// `WM_APP_DESKTOP_CHANGED` to `hwnd`. The returned thread guard must be kept
+/// alive for the lifetime of the program.
+pub fn start_listener(hwnd: HWND) -> Result<winvd::DesktopEventThread> {
+    use winvd::DesktopEvent;
+
+    let (tx, rx) = std::sync::mpsc::channel::<DesktopEvent>();
+    let guard = winvd::listen_desktop_events(tx)
+        .map_err(|e| anyhow!("listen_desktop_events: {e:?}"))?;
+
+    // HWND is not Send; pass the raw pointer as isize and rebuild it in the thread.
+    let hwnd_raw = hwnd.0 as isize;
+    std::thread::spawn(move || {
+        for ev in rx {
+            let relevant = matches!(
+                ev,
+                DesktopEvent::DesktopChanged { .. }
+                    | DesktopEvent::DesktopNameChanged(..)
+                    | DesktopEvent::DesktopCreated(..)
+                    | DesktopEvent::DesktopDestroyed { .. }
+                    | DesktopEvent::DesktopMoved { .. }
+            );
+            if relevant {
+                unsafe {
+                    let hwnd = HWND(hwnd_raw as *mut core::ffi::c_void);
+                    let _ = PostMessageW(hwnd, WM_APP_DESKTOP_CHANGED, WPARAM(0), LPARAM(0));
+                }
+            }
+        }
+    });
+    Ok(guard)
+}

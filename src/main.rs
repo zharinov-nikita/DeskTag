@@ -26,6 +26,12 @@ fn run_daemon() -> anyhow::Result<()> {
     let initial = desktop::current_label().unwrap_or_else(|_| "Desktop ?".to_string());
     let hwnd = badge::create(&initial)?;
     pin_with_retry(hwnd);
+    let _listener = desktop::start_listener(hwnd)
+        .map_err(|e| {
+            eprintln!("warning: event listener failed, label will not auto-update: {e:?}");
+            e
+        })
+        .ok();
     run_message_loop();
     Ok(())
 }

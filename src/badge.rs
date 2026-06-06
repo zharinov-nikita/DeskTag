@@ -203,6 +203,12 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
                 let _ = EndPaint(hwnd, &ps);
                 LRESULT(0)
             }
+            WM_APP_DESKTOP_CHANGED => {
+                if let Ok(text) = crate::desktop::current_label() {
+                    apply_label(hwnd, &text);
+                }
+                LRESULT(0)
+            }
             _ => DefWindowProcW(hwnd, msg, wparam, lparam),
         }
     }
