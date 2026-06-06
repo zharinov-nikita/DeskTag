@@ -4,6 +4,7 @@ mod badge;
 mod desktop;
 mod icon;
 mod label;
+mod theme;
 
 use std::time::{Duration, Instant};
 use windows::Win32::Foundation::HWND;
