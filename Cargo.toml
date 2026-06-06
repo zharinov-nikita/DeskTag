@@ -4,6 +4,9 @@ version = "1.0.1"
 edition = "2021"
 authors = ["zharinov-nikita <zharinov.nicita@gmail.com>"]
 description = "Always-on-top badge showing the current Windows 11 virtual desktop name"
+repository = "https://github.com/zharinov-nikita/DeskTag"
+license = "MIT"
+readme = "README.md"
 
 [[bin]]
 name = "desktag"
