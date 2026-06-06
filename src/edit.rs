@@ -58,6 +58,19 @@ impl EditState {
         self.caret = prev;
     }
 
+    /// Clear the whole buffer (Ctrl+Backspace / Ctrl+Delete).
+    pub fn clear(&mut self) {
+        self.buf.clear();
+        self.caret = 0;
+        self.fresh = false;
+    }
+
+    /// Select all: the next edit replaces/clears everything (Ctrl+A), reusing
+    /// the same `fresh` mechanism as entering edit mode.
+    pub fn select_all(&mut self) {
+        self.fresh = true;
+    }
+
     pub fn text(&self) -> &str {
         &self.buf
     }
@@ -131,5 +144,34 @@ mod tests {
         e.backspace();
         assert_eq!(e.text(), "пр");
         assert_eq!(e.caret(), "пр".len()); // 4 bytes, on boundary
+    }
+
+    #[test]
+    fn clear_empties_buffer() {
+        let mut e = EditState::new("hello");
+        e.insert_char('x'); // fresh-replace -> "x"
+        e.clear();
+        assert_eq!(e.text(), "");
+        assert_eq!(e.caret(), 0);
+    }
+
+    #[test]
+    fn select_all_then_type_replaces() {
+        let mut e = EditState::new("");
+        e.insert_char('a');
+        e.insert_char('b');
+        e.select_all();
+        e.insert_char('x');
+        assert_eq!(e.text(), "x");
+    }
+
+    #[test]
+    fn select_all_then_backspace_clears() {
+        let mut e = EditState::new("");
+        e.insert_char('a');
+        e.insert_char('b');
+        e.select_all();
+        e.backspace();
+        assert_eq!(e.text(), "");
     }
 }

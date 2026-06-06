@@ -11,7 +11,9 @@ use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::Shell::{
     Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NOTIFYICONDATAW,
 };
-use windows::Win32::UI::Input::KeyboardAndMouse::{SetFocus, VIRTUAL_KEY, VK_ESCAPE, VK_RETURN};
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    GetKeyState, SetFocus, VIRTUAL_KEY, VK_CONTROL, VK_DELETE, VK_ESCAPE, VK_RETURN,
+};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 /// Posted (from the listener thread) when the current desktop or its name changes.
@@ -464,23 +466,23 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
             WM_CHAR => {
                 if is_editing() {
                     let code = wparam.0 as u32;
-                    if code == 0x08 {
-                        // Backspace
-                        EDIT.with(|e| {
-                            if let Some(s) = e.borrow_mut().as_mut() {
-                                s.backspace();
-                            }
-                        });
-                    } else if let Some(c) = char::from_u32(code) {
-                        // Enter/Esc are control chars handled in WM_KEYDOWN.
-                        if !c.is_control() {
-                            EDIT.with(|e| {
-                                if let Some(s) = e.borrow_mut().as_mut() {
-                                    s.insert_char(c);
+                    EDIT.with(|e| {
+                        if let Some(s) = e.borrow_mut().as_mut() {
+                            match code {
+                                0x08 => s.backspace(),  // Backspace
+                                0x7F => s.clear(),       // Ctrl+Backspace -> clear all
+                                0x01 => s.select_all(),  // Ctrl+A -> select all
+                                _ => {
+                                    if let Some(c) = char::from_u32(code) {
+                                        // Enter/Esc are control chars (WM_KEYDOWN).
+                                        if !c.is_control() {
+                                            s.insert_char(c);
+                                        }
+                                    }
                                 }
-                            });
+                            }
                         }
-                    }
+                    });
                     resize_and_position(hwnd);
                     let _ = InvalidateRect(hwnd, None, BOOL(1));
                 }
@@ -491,6 +493,20 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
                     match VIRTUAL_KEY(wparam.0 as u16) {
                         VK_RETURN => commit_edit(hwnd),
                         VK_ESCAPE => cancel_edit(hwnd),
+                        VK_DELETE => {
+                            // Ctrl+Delete clears all (plain Delete is a no-op for
+                            // now — no caret movement, see spec non-goals).
+                            let ctrl = GetKeyState(VK_CONTROL.0 as i32) < 0;
+                            if ctrl {
+                                EDIT.with(|e| {
+                                    if let Some(s) = e.borrow_mut().as_mut() {
+                                        s.clear();
+                                    }
+                                });
+                                resize_and_position(hwnd);
+                                let _ = InvalidateRect(hwnd, None, BOOL(1));
+                            }
+                        }
                         _ => {}
                     }
                 }
