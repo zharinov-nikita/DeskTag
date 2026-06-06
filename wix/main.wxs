@@ -56,7 +56,8 @@
     <?define PlatformProgramFilesFolder = "ProgramFilesFolder" ?>
 <?endif ?>
 
-<Wix xmlns='http://schemas.microsoft.com/wix/2006/wi'>
+<Wix xmlns='http://schemas.microsoft.com/wix/2006/wi'
+     xmlns:util='http://schemas.microsoft.com/wix/UtilExtension'>
 
     <Product
         Id='*'
@@ -127,11 +128,37 @@
                                 DiskId='1'
                                 Source='$(var.CargoTargetBinDir)\desktag.exe'
                                 KeyPath='yes'/>
+                            <RegistryValue
+                                Root='HKLM'
+                                Key='Software\Microsoft\Windows\CurrentVersion\Run'
+                                Name='DeskTag'
+                                Type='string'
+                                Value='&quot;[#exe0]&quot;'
+                                KeyPath='no'/>
                         </Component>
                     </Directory>
                 </Directory>
             </Directory>
+            <Directory Id='ProgramMenuFolder' Name='Programs'/>
         </Directory>
+
+        <DirectoryRef Id='ProgramMenuFolder'>
+            <Component Id='ApplicationShortcut' Guid='*'>
+                <Shortcut Id='AppStartMenuShortcut'
+                          Name='DeskTag'
+                          Description='Show the current virtual desktop name'
+                          Target='[#exe0]'
+                          WorkingDirectory='APPLICATIONFOLDER'
+                          Icon='ProductICO'/>
+                <RemoveFolder Id='CleanupShortcut' On='uninstall'/>
+                <RegistryValue Root='HKCU'
+                               Key='Software\DeskTag'
+                               Name='installed'
+                               Type='integer'
+                               Value='1'
+                               KeyPath='yes'/>
+            </Component>
+        </DirectoryRef>
 
         <Feature
             Id='Binaries'
@@ -150,6 +177,7 @@
             <!--<ComponentRef Id='License'/>-->
 
             <ComponentRef Id='binary0'/>
+            <ComponentRef Id='ApplicationShortcut'/>
 
             <Feature
                 Id='Environment'
@@ -163,6 +191,23 @@
 
         <SetProperty Id='ARPINSTALLLOCATION' Value='[APPLICATIONFOLDER]' After='CostFinalize'/>
 
+        <util:CloseApplication Id='CloseDeskTag'
+                               Target='desktag.exe'
+                               CloseMessage='yes'
+                               RebootPrompt='no'
+                               Description='Closing DeskTag before continuing...'/>
+
+        <Property Id='WixShellExecTarget' Value='[#exe0]'/>
+        <CustomAction Id='LaunchApplication'
+                      BinaryKey='WixCA'
+                      DllEntry='WixShellExec'
+                      Impersonate='yes'
+                      Execute='immediate'
+                      Return='ignore'/>
+        <InstallExecuteSequence>
+            <Custom Action='LaunchApplication' After='InstallFinalize'>NOT Installed</Custom>
+        </InstallExecuteSequence>
+
         
         <!--
           Uncomment the following `Icon` and `Property` tags to change the product icon.
@@ -170,8 +215,8 @@
           The product icon is the graphic that appears in the Add/Remove
           Programs control panel for the application.
         -->
-        <!--<Icon Id='ProductICO' SourceFile='wix\Product.ico'/>-->
-        <!--<Property Id='ARPPRODUCTICON' Value='ProductICO' />-->
+        <Icon Id='ProductICO' SourceFile='assets\desktag.ico'/>
+        <Property Id='ARPPRODUCTICON' Value='ProductICO' />
 
         
         <!--
