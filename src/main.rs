@@ -39,6 +39,9 @@ fn run_daemon() -> anyhow::Result<()> {
     let initial = desktop::current_label().unwrap_or_else(|_| "Desktop ?".to_string());
     let hwnd = badge::create(&initial)?;
     pin_with_retry(hwnd);
+    // Must follow pinning: the pin registers an app view that re-adds the badge
+    // to Alt-Tab, and this drops it back out via WS_EX_TOOLWINDOW.
+    badge::hide_from_alt_tab(hwnd);
     badge::install_tray(hwnd);
     match desktop::start_listener(hwnd) {
         Ok(guard) => {

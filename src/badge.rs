@@ -52,11 +52,14 @@ pub fn create(initial: &str) -> Result<HWND> {
         }
 
         // Hidden owner window. Owning the badge keeps it off the taskbar and out
-        // of Alt-Tab WITHOUT WS_EX_TOOLWINDOW. This matters: a tool window (or a
-        // WS_EX_NOACTIVATE window) is not given an application view by the shell,
-        // and winvd::pin_window needs that view — so a tool window can never be
-        // pinned to all desktops. Ownership achieves the same hiding while
-        // leaving the badge pinnable.
+        // of Alt-Tab while it is being pinned. We do NOT set WS_EX_TOOLWINDOW at
+        // creation: a tool window (or a WS_EX_NOACTIVATE window) is not given an
+        // application view by the shell, and winvd::pin_window needs that view to
+        // pin the badge to every desktop. So the order is: create plain + owned,
+        // pin (which registers the app view — and that app view re-introduces the
+        // badge into Alt-Tab despite ownership), THEN add WS_EX_TOOLWINDOW via
+        // hide_from_alt_tab. The pinned app view survives the late style change,
+        // but the badge drops back out of the switcher.
         let owner = CreateWindowExW(
             WINDOW_EX_STYLE(0),
             class_name,
@@ -73,9 +76,10 @@ pub fn create(initial: &str) -> Result<HWND> {
         )
         .map_err(|e| anyhow!("CreateWindowExW(owner): {e:?}"))?;
 
-        // No WS_EX_TOOLWINDOW / WS_EX_NOACTIVATE (see owner comment above). The
-        // badge still never activates: it is shown with SW_SHOWNOACTIVATE, moved
-        // with SWP_NOACTIVATE, and WS_EX_TRANSPARENT passes clicks through.
+        // WS_EX_TOOLWINDOW is added later (post-pin; see hide_from_alt_tab and the
+        // owner comment above), not here. WS_EX_NOACTIVATE is never used: the badge
+        // already never activates — it is shown with SW_SHOWNOACTIVATE, moved with
+        // SWP_NOACTIVATE, and WS_EX_TRANSPARENT passes clicks through.
         let ex_style = WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST;
 
         let hwnd = CreateWindowExW(
@@ -116,6 +120,29 @@ pub fn reassert_topmost(hwnd: HWND) {
             0,
             0,
             SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+        );
+    }
+}
+
+/// Drop the badge out of the Alt-Tab switcher by adding WS_EX_TOOLWINDOW.
+///
+/// Call this AFTER the window has been pinned to all desktops: pinning registers
+/// a shell application view, and an app-view window shows up in Alt-Tab even when
+/// it is owned. WS_EX_TOOLWINDOW removes it from the switcher; the already-pinned
+/// app view survives the late style change, so the badge stays on every desktop.
+pub fn hide_from_alt_tab(hwnd: HWND) {
+    unsafe {
+        let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex | WS_EX_TOOLWINDOW.0 as isize);
+        // Commit the style change so the frame/switcher state is refreshed.
+        let _ = SetWindowPos(
+            hwnd,
+            HWND::default(),
+            0,
+            0,
+            0,
+            0,
+            SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
         );
     }
 }
