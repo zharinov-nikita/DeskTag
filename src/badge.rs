@@ -369,6 +369,35 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
                         DT_CENTER | DT_VCENTER | DT_SINGLELINE,
                     );
                 });
+
+                // Caret: a vertical bar at the edit caret, on the visible blink
+                // phase. Text is centered, so derive its left edge from the full
+                // text width, then advance by the head (pre-caret) width. Caret
+                // height comes from a reference glyph so an empty name still shows
+                // a caret.
+                if is_editing() && CARET_ON.with(|c| c.get()) {
+                    EDIT.with(|e| {
+                        if let Some(s) = e.borrow().as_ref() {
+                            let full: Vec<u16> = s.text().encode_utf16().collect();
+                            let mut full_sz = SIZE::default();
+                            let _ = GetTextExtentPoint32W(hdc, &full, &mut full_sz);
+                            let head: Vec<u16> = s.text()[..s.caret()].encode_utf16().collect();
+                            let mut head_sz = SIZE::default();
+                            let _ = GetTextExtentPoint32W(hdc, &head, &mut head_sz);
+                            let mut ref_sz = SIZE::default();
+                            let _ = GetTextExtentPoint32W(hdc, &[0x41u16], &mut ref_sz);
+                            let caret_x = (rc.right - full_sz.cx) / 2 + head_sz.cx;
+                            let top = (rc.bottom - ref_sz.cy) / 2;
+                            let pen = CreatePen(PS_SOLID, scale(hwnd, 1), TEXT_COLOR);
+                            let oldpen = SelectObject(hdc, pen);
+                            let _ = MoveToEx(hdc, caret_x, top, None);
+                            let _ = LineTo(hdc, caret_x, top + ref_sz.cy);
+                            SelectObject(hdc, oldpen);
+                            let _ = DeleteObject(pen);
+                        }
+                    });
+                }
+
                 SelectObject(hdc, old);
                 let _ = DeleteObject(font);
 
