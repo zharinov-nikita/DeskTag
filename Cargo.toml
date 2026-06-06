@@ -2,6 +2,8 @@
 name = "desktag"
 version = "1.0.0"
 edition = "2021"
+authors = ["zharinov-nikita <zharinov.nicita@gmail.com>"]
+description = "Always-on-top badge showing the current Windows 11 virtual desktop name"
 
 [[bin]]
 name = "desktag"
@@ -32,3 +34,6 @@ winresource = "0.1"
 version = "1"
 default-features = false
 features = ["user-hooks"]
+
+[package.metadata.wix]
+eula = false
