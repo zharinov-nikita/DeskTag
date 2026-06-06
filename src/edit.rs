@@ -77,6 +77,52 @@ impl EditState {
         self.fresh
     }
 
+    /// Move the caret one char left. A selection collapses to its start.
+    pub fn move_left(&mut self) {
+        if self.fresh {
+            self.fresh = false;
+            self.caret = 0;
+            return;
+        }
+        if self.caret > 0 {
+            let prev = self.buf[..self.caret]
+                .chars()
+                .next_back()
+                .map(|c| self.caret - c.len_utf8())
+                .unwrap_or(0);
+            self.caret = prev;
+        }
+    }
+
+    /// Move the caret one char right. A selection collapses to its end.
+    pub fn move_right(&mut self) {
+        if self.fresh {
+            self.fresh = false;
+            self.caret = self.buf.len();
+            return;
+        }
+        if self.caret < self.buf.len() {
+            let adv = self.buf[self.caret..]
+                .chars()
+                .next()
+                .map(|c| c.len_utf8())
+                .unwrap_or(0);
+            self.caret += adv;
+        }
+    }
+
+    /// Move the caret to the start.
+    pub fn home(&mut self) {
+        self.fresh = false;
+        self.caret = 0;
+    }
+
+    /// Move the caret to the end.
+    pub fn end(&mut self) {
+        self.fresh = false;
+        self.caret = self.buf.len();
+    }
+
     pub fn text(&self) -> &str {
         &self.buf
     }
@@ -189,5 +235,63 @@ mod tests {
         assert!(!e.is_selected()); // cleared after first edit
         e.select_all();
         assert!(e.is_selected()); // re-selected
+    }
+
+    #[test]
+    fn move_left_collapses_selection_to_start() {
+        let mut e = EditState::new("abc"); // fresh, caret at end
+        e.move_left();
+        assert_eq!(e.caret(), 0);
+        assert!(!e.is_selected());
+        e.insert_char('x');
+        assert_eq!(e.text(), "xabc");
+    }
+
+    #[test]
+    fn move_right_collapses_selection_to_end() {
+        let mut e = EditState::new("abc");
+        e.move_right();
+        assert_eq!(e.caret(), "abc".len());
+        e.insert_char('x');
+        assert_eq!(e.text(), "abcx");
+    }
+
+    #[test]
+    fn mid_edit_insert_and_backspace() {
+        let mut e = EditState::new("");
+        for c in "abc".chars() {
+            e.insert_char(c);
+        }
+        e.move_left(); // "ab|c"
+        e.insert_char('X'); // "abXc"
+        assert_eq!(e.text(), "abXc");
+        e.backspace(); // remove X
+        assert_eq!(e.text(), "abc");
+    }
+
+    #[test]
+    fn home_end_move_caret() {
+        let mut e = EditState::new("");
+        for c in "hi".chars() {
+            e.insert_char(c);
+        }
+        e.home();
+        assert_eq!(e.caret(), 0);
+        e.end();
+        assert_eq!(e.caret(), "hi".len());
+    }
+
+    #[test]
+    fn move_caret_cyrillic_boundaries() {
+        let mut e = EditState::new("");
+        for c in "абв".chars() {
+            e.insert_char(c);
+        }
+        e.move_left();
+        assert_eq!(e.caret(), "аб".len()); // before в
+        e.move_left();
+        assert_eq!(e.caret(), "а".len());
+        e.move_right();
+        assert_eq!(e.caret(), "аб".len());
     }
 }

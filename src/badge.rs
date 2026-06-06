@@ -12,7 +12,8 @@ use windows::Win32::UI::Shell::{
     Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NOTIFYICONDATAW,
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetKeyState, SetFocus, VIRTUAL_KEY, VK_CONTROL, VK_DELETE, VK_ESCAPE, VK_RETURN,
+    GetKeyState, SetFocus, VIRTUAL_KEY, VK_CONTROL, VK_DELETE, VK_END, VK_ESCAPE, VK_HOME, VK_LEFT,
+    VK_RETURN, VK_RIGHT,
 };
 use windows::Win32::UI::WindowsAndMessaging::*;
 
@@ -524,9 +525,25 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
             }
             WM_KEYDOWN => {
                 if is_editing() {
-                    match VIRTUAL_KEY(wparam.0 as u16) {
+                    let vk = VIRTUAL_KEY(wparam.0 as u16);
+                    match vk {
                         VK_RETURN => commit_edit(hwnd),
                         VK_ESCAPE => cancel_edit(hwnd),
+                        VK_LEFT | VK_RIGHT | VK_HOME | VK_END => {
+                            EDIT.with(|e| {
+                                if let Some(s) = e.borrow_mut().as_mut() {
+                                    match vk {
+                                        VK_LEFT => s.move_left(),
+                                        VK_RIGHT => s.move_right(),
+                                        VK_HOME => s.home(),
+                                        VK_END => s.end(),
+                                        _ => {}
+                                    }
+                                }
+                            });
+                            CARET_ON.with(|c| c.set(true)); // show caret right after a move
+                            let _ = InvalidateRect(hwnd, None, BOOL(1));
+                        }
                         VK_DELETE => {
                             // Ctrl+Delete clears all (plain Delete is a no-op for
                             // now — no caret movement, see spec non-goals).
