@@ -2,6 +2,7 @@
 
 mod badge;
 mod desktop;
+mod icon;
 mod label;
 
 use std::time::{Duration, Instant};
