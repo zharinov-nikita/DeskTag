@@ -250,7 +250,8 @@ fn tray_icon_size() -> u32 {
 pub fn install_tray(hwnd: HWND) {
     unsafe {
         let size = tray_icon_size();
-        let hicon = match crate::icon::make_tray_hicon(&current_desktop_number(), size) {
+        let palette = current_palette();
+        let hicon = match crate::icon::make_tray_hicon(&current_desktop_number(), size, &palette) {
             Ok(h) => {
                 CURRENT_TRAY_ICON.with(|c| c.set(h));
                 h
@@ -279,7 +280,8 @@ pub fn install_tray(hwnd: HWND) {
 fn update_tray_icon(hwnd: HWND) {
     unsafe {
         let size = tray_icon_size();
-        let new = match crate::icon::make_tray_hicon(&current_desktop_number(), size) {
+        let palette = current_palette();
+        let new = match crate::icon::make_tray_hicon(&current_desktop_number(), size, &palette) {
             Ok(h) => h,
             Err(_) => return,
         };
