@@ -9,21 +9,21 @@ every desktop. Rust + Win32.
 cargo build --release   # -> target/release/desktag.exe
 cargo run -- --once     # print current desktop label and exit (dev one-shot)
 cargo run -- --gen-icon assets/desktag.ico  # regenerate the exe icon asset
-cargo test              # unit tests: label + edit + position + config + (Windows) icon raster/.ico
+cargo test              # unit tests: label + edit + position + config + theme + (Windows) icon raster/.ico
 cargo clippy            # lint
 ```
-
-A cargo-husky `pre-commit` hook (in `.git/hooks`, shared by worktrees) runs
-`cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings`, and
-`cargo test` on every commit — keep the tree rustfmt-clean and warning-free or
-commits are rejected.
 
 Run the built binary: `desktag.exe` (daemon; quit via tray icon) or
 `desktag.exe --once`.
 
+A git **pre-commit** hook (via `cargo-husky`, dev-dependency) blocks commits on
+`cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, or `cargo test`
+failures. It self-installs into `.git/hooks/` the first time you run `cargo test`.
+Bypass deliberately with `git commit --no-verify`.
+
 ## Architecture
 
-Single binary, eight modules under `src/`:
+Single binary, nine modules under `src/`:
 
 - `main.rs` — entry. `--once` prints the label and exits; `--gen-icon [path]`
   writes the `.ico` asset and exits; otherwise sets
@@ -35,9 +35,10 @@ Single binary, eight modules under `src/`:
   rename mode (double-click to edit the desktop name). Also owns badge
   placement: the tray **Position** submenu (nine anchor presets) and
   drag-to-move; `resize_and_position` reads the `POSITION` thread-local.
+  Paints with the `theme.rs` `Palette` for the current `CURRENT_THEME`.
   Owns UI-thread state (`thread_local!` LABEL + EDIT buffer + caret +
-  POSITION + DRAG). Receives clicks (no `WS_EX_TRANSPARENT`) but never
-  activates (`WS_EX_NOACTIVATE`).
+  POSITION + DRAG + CURRENT_THEME). Receives clicks (no `WS_EX_TRANSPARENT`)
+  but never activates (`WS_EX_NOACTIVATE`).
 - `desktop.rs` — thin wrapper over the `winvd` crate: read current desktop
   index+name, rename the current desktop, pin to all desktops, spawn the
   event-listener thread.
@@ -55,6 +56,9 @@ Single binary, eight modules under `src/`:
   OS-independent; unit-tested alongside `label.rs`/`edit.rs`.
 - `config.rs` — load/save the chosen `Position` to `%APPDATA%\DeskTag\config`
   (key=value). Best-effort IO; missing/garbage → default (top-center).
+- `theme.rs` — system light/dark detection + per-theme `Palette` (bg/text/
+  border). `Palette::for_theme` is pure (unit-tested); `detect()` reads the
+  registry. Single source of truth for badge and tray-icon colors.
 
 `build.rs` embeds `assets/desktag.ico` (regenerate with `--gen-icon`) as the
 exe icon resource via `winresource`.
@@ -106,6 +110,12 @@ re-reads the label, repaints, and rebuilds the tray icon.
   (`IDI_APPLICATION`) is shared and is never destroyed (cell stays null).
 - **Naming:** the folder/README say "DeskTag" but the crate and binary are
   `desktag` (lowercase); the window class is `DeskTagBadgeClass`.
+- **Pre-commit hook installs via `cargo test`.** `cargo-husky` (user-hook mode,
+  `default-features = false`, `features = ["user-hooks"]`) copies
+  `.cargo-husky/hooks/pre-commit` into `.git/hooks/` from its build script, which
+  runs only when dev-dependencies compile — i.e. on `cargo test`, NOT plain
+  `cargo build`. `.gitattributes` pins the hook to LF (MSYS `sh` needs it). Fresh
+  clones get the hook on their first `cargo test`.
 
 ## Environment
 

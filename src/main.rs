@@ -7,6 +7,7 @@ mod edit;
 mod icon;
 mod label;
 mod position;
+mod theme;
 
 use std::time::{Duration, Instant};
 use windows::Win32::Foundation::HWND;

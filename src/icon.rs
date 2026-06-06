@@ -4,17 +4,16 @@
 use anyhow::{anyhow, Result};
 use std::ffi::c_void;
 use windows::core::w;
-use windows::Win32::Foundation::{COLORREF, RECT, SIZE};
+use windows::Win32::Foundation::{RECT, SIZE};
 use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::UI::WindowsAndMessaging::{CreateIconIndirect, HICON, ICONINFO};
 
-// Pill palette — keep in sync with badge.rs (window pill uses the same colors).
-const BG: COLORREF = COLORREF(0x0020_2020); // 0x00BBGGRR, dark gray
-const TEXT: COLORREF = COLORREF(0x00F0_F0F0); // near white
+use crate::theme::{Palette, Theme};
 
 /// Rasterise a rounded pill with centered `text` into a `size`×`size`, top-down
-/// RGBA buffer (4 bytes/px). Alpha is 255 inside the pill, 0 outside.
-pub fn rasterize(text: &str, size: u32) -> Result<Vec<u8>> {
+/// RGBA buffer (4 bytes/px). Alpha is 255 inside the pill, 0 outside. With
+/// `border`, a hairline frame in `palette.border` is drawn inside the pill.
+pub fn rasterize(text: &str, size: u32, palette: &Palette, border: bool) -> Result<Vec<u8>> {
     let s = size as i32;
     let radius = (s * 6 / 10).max(2); // strong rounding for a pill look
     unsafe {
@@ -45,7 +44,7 @@ pub fn rasterize(text: &str, size: u32) -> Result<Vec<u8>> {
         std::ptr::write_bytes(bits as *mut u8, 0, (s * s * 4) as usize);
 
         // Pill fill, no outline: NULL_PEN + solid brush.
-        let brush = CreateSolidBrush(BG);
+        let brush = CreateSolidBrush(palette.bg);
         let old_brush = SelectObject(hdc, brush);
         let old_pen = SelectObject(hdc, GetStockObject(NULL_PEN));
         let _ = RoundRect(hdc, 0, 0, s, s, radius, radius);
@@ -55,7 +54,7 @@ pub fn rasterize(text: &str, size: u32) -> Result<Vec<u8>> {
 
         // Centered text, shrink-to-fit (handles 2-digit numbers).
         SetBkMode(hdc, TRANSPARENT);
-        SetTextColor(hdc, TEXT);
+        SetTextColor(hdc, palette.text);
         let font = make_icon_font(hdc, text, size);
         let old_font = SelectObject(hdc, font);
         let mut rc = RECT {
@@ -73,6 +72,17 @@ pub fn rasterize(text: &str, size: u32) -> Result<Vec<u8>> {
         );
         SelectObject(hdc, old_font);
         let _ = DeleteObject(font);
+
+        // Optional hairline border, same rounded shape. Drawn before the alpha
+        // pass so border pixels (inside the region) get alpha 255. Skipped for
+        // the embedded .ico so that asset stays byte-identical.
+        if border {
+            let border_brush = CreateSolidBrush(palette.border);
+            let brgn = CreateRoundRectRgn(0, 0, s + 1, s + 1, radius, radius);
+            let _ = FrameRgn(hdc, brgn, border_brush, 1, 1);
+            let _ = DeleteObject(brgn);
+            let _ = DeleteObject(border_brush);
+        }
 
         // Read pixels (BGRA, top-down).
         let mut bgra = vec![0u8; (s * s * 4) as usize];
@@ -140,8 +150,8 @@ unsafe fn make_icon_font(hdc: HDC, text: &str, size: u32) -> HFONT {
 
 /// Build a tray-sized HICON showing `text`. The caller owns it and must
 /// `DestroyIcon` it when it is replaced or on teardown.
-pub fn make_tray_hicon(text: &str, size: u32) -> Result<HICON> {
-    let rgba = rasterize(text, size)?;
+pub fn make_tray_hicon(text: &str, size: u32, palette: &Palette) -> Result<HICON> {
+    let rgba = rasterize(text, size, palette, true)?;
     let s = size as i32;
     unsafe {
         // Color bitmap: 32-bpp top-down DIB filled from RGBA (stored as BGRA).
@@ -201,15 +211,18 @@ pub fn make_tray_hicon(text: &str, size: u32) -> Result<HICON> {
 
 /// Encode `text` as a multi-size .ico (16/32/48/256, BMP entries) and write `path`.
 pub fn write_ico(path: &str, text: &str) -> Result<()> {
-    let bytes = encode_ico(text, &[16, 32, 48, 256])?;
+    // The embedded EXE icon is static; bake it in the Dark palette with no
+    // border so the committed asset never changes with the user's theme.
+    let palette = Palette::for_theme(Theme::Dark);
+    let bytes = encode_ico(text, &[16, 32, 48, 256], &palette)?;
     std::fs::write(path, bytes).map_err(|e| anyhow!("write {path}: {e}"))
 }
 
 /// Assemble an ICONDIR + entries + BMP images. No PNG; BMP entries only.
-fn encode_ico(text: &str, sizes: &[u32]) -> Result<Vec<u8>> {
+fn encode_ico(text: &str, sizes: &[u32], palette: &Palette) -> Result<Vec<u8>> {
     let images: Vec<Vec<u8>> = sizes
         .iter()
-        .map(|&sz| bmp_icon_image(text, sz))
+        .map(|&sz| bmp_icon_image(text, sz, palette))
         .collect::<Result<_>>()?;
 
     let count = sizes.len() as u16;
@@ -240,8 +253,8 @@ fn encode_ico(text: &str, sizes: &[u32]) -> Result<Vec<u8>> {
 
 /// One BMP-format icon image: BITMAPINFOHEADER (height doubled for XOR+AND),
 /// 32-bpp BGRA XOR (bottom-up), then a 1-bpp AND mask (bottom-up, 4-byte rows).
-fn bmp_icon_image(text: &str, size: u32) -> Result<Vec<u8>> {
-    let rgba = rasterize(text, size)?; // top-down RGBA
+fn bmp_icon_image(text: &str, size: u32, palette: &Palette) -> Result<Vec<u8>> {
+    let rgba = rasterize(text, size, palette, false)?; // top-down RGBA
     let s = size as usize;
     let mut out = Vec::new();
 
@@ -285,11 +298,13 @@ fn bmp_icon_image(text: &str, size: u32) -> Result<Vec<u8>> {
 #[cfg(windows)]
 mod tests {
     use super::*;
+    use crate::theme::{Palette, Theme};
 
     #[test]
     fn rasterize_pill_has_size_and_alpha() {
         let size = 32u32;
-        let rgba = rasterize("1", size).unwrap();
+        let palette = Palette::for_theme(Theme::Dark);
+        let rgba = rasterize("1", size, &palette, true).unwrap();
         assert_eq!(rgba.len(), (size * size * 4) as usize);
         // Pill body is opaque somewhere, corners are transparent somewhere.
         assert!(
@@ -303,8 +318,18 @@ mod tests {
     }
 
     #[test]
+    fn border_changes_pixels() {
+        let size = 32u32;
+        let palette = Palette::for_theme(Theme::Dark);
+        let plain = rasterize("1", size, &palette, false).unwrap();
+        let bordered = rasterize("1", size, &palette, true).unwrap();
+        assert_ne!(plain, bordered, "border flag should change the raster");
+    }
+
+    #[test]
     fn make_tray_hicon_returns_icon() {
-        let icon = make_tray_hicon("2", 32).unwrap();
+        let palette = Palette::for_theme(Theme::Light);
+        let icon = make_tray_hicon("2", 32, &palette).unwrap();
         assert!(!icon.is_invalid());
         unsafe {
             let _ = windows::Win32::UI::WindowsAndMessaging::DestroyIcon(icon);
@@ -314,7 +339,8 @@ mod tests {
     #[test]
     fn encode_ico_has_valid_header() {
         let sizes = [16u32, 32, 48, 256];
-        let bytes = encode_ico("D", &sizes).unwrap();
+        let palette = Palette::for_theme(Theme::Dark);
+        let bytes = encode_ico("D", &sizes, &palette).unwrap();
         // ICONDIR magic: reserved=0, type=1 (icon).
         assert_eq!(&bytes[0..4], &[0, 0, 1, 0]);
         // Entry count.

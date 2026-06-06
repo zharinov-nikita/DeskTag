@@ -1,6 +1,7 @@
 /target
 **/*.rs.bk
 *.pdb
-superpowers/
+/superpowers/
 .claude/settings.local.json
 ISSUES.md
+CLAUDE.local.md

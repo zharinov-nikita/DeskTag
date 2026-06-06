@@ -19,6 +19,7 @@ use windows::Win32::UI::Shell::{
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 use crate::position::{self, Anchor, Position};
+use crate::theme::{Palette, Theme};
 
 /// Posted (from the listener thread) when the current desktop or its name changes.
 pub const WM_APP_DESKTOP_CHANGED: u32 = WM_APP + 1;
@@ -33,8 +34,6 @@ const TIMER_POLL: usize = 2;
 const TIMER_CARET: usize = 3;
 
 // COLORREF is 0x00BBGGRR.
-const BG_COLOR: COLORREF = COLORREF(0x0020_2020); // dark gray
-const TEXT_COLOR: COLORREF = COLORREF(0x00F0_F0F0); // near white
 const SEL_COLOR: COLORREF = COLORREF(0x00D4_7800); // selection blue (#0078D4), 0x00BBGGRR
 const ALPHA: u8 = 220;
 
@@ -63,12 +62,15 @@ thread_local! {
     static POSITION: RefCell<Position> = RefCell::new(Position::default());
     /// In-flight badge drag, or None.
     static DRAG: Cell<Option<DragState>> = const { Cell::new(None) };
+    /// The system theme we last painted with. Updated on WM_SETTINGCHANGE.
+    static CURRENT_THEME: Cell<Theme> = const { Cell::new(Theme::Dark) };
 }
 
 /// Create and show the badge window. Returns its HWND.
 pub fn create(initial: &str) -> Result<HWND> {
     LABEL.with(|l| *l.borrow_mut() = initial.to_string());
     POSITION.with(|p| *p.borrow_mut() = crate::config::load());
+    CURRENT_THEME.with(|t| t.set(crate::theme::detect()));
     unsafe {
         let hinstance = GetModuleHandleW(None).map_err(|e| anyhow!("GetModuleHandleW: {e:?}"))?;
         let class_name = w!("DeskTagBadgeClass");
@@ -210,6 +212,28 @@ pub fn apply_label(hwnd: HWND, text: &str) {
 fn scale(hwnd: HWND, v: i32) -> i32 {
     let dpi = unsafe { GetDpiForWindow(hwnd) }.max(96);
     v * dpi as i32 / 96
+}
+
+/// The palette for the theme we currently believe is active (UI thread only).
+fn current_palette() -> Palette {
+    Palette::for_theme(CURRENT_THEME.with(|t| t.get()))
+}
+
+/// True when a WM_SETTINGCHANGE lParam points to the wide string
+/// "ImmersiveColorSet" — the signal Windows broadcasts on a light/dark or
+/// accent change. lParam can be null for other setting changes.
+unsafe fn lparam_is_immersive_color_set(lparam: LPARAM) -> bool {
+    if lparam.0 == 0 {
+        return false;
+    }
+    let ptr = lparam.0 as *const u16;
+    let mut len = 0usize;
+    // "ImmersiveColorSet" is 17 chars; cap the scan well above that.
+    while len <= 64 && *ptr.add(len) != 0 {
+        len += 1;
+    }
+    let s = String::from_utf16_lossy(std::slice::from_raw_parts(ptr, len));
+    s == "ImmersiveColorSet"
 }
 
 unsafe fn make_font(hwnd: HWND) -> HFONT {
@@ -355,7 +379,8 @@ fn tray_icon_size() -> u32 {
 pub fn install_tray(hwnd: HWND) {
     unsafe {
         let size = tray_icon_size();
-        let hicon = match crate::icon::make_tray_hicon(&current_desktop_number(), size) {
+        let palette = current_palette();
+        let hicon = match crate::icon::make_tray_hicon(&current_desktop_number(), size, &palette) {
             Ok(h) => {
                 CURRENT_TRAY_ICON.with(|c| c.set(h));
                 h
@@ -384,7 +409,8 @@ pub fn install_tray(hwnd: HWND) {
 fn update_tray_icon(hwnd: HWND) {
     unsafe {
         let size = tray_icon_size();
-        let new = match crate::icon::make_tray_hicon(&current_desktop_number(), size) {
+        let palette = current_palette();
+        let new = match crate::icon::make_tray_hicon(&current_desktop_number(), size, &palette) {
             Ok(h) => h,
             Err(_) => return,
         };
@@ -511,14 +537,16 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
                 let mut rc = RECT::default();
                 let _ = GetClientRect(hwnd, &mut rc);
 
-                let brush = CreateSolidBrush(BG_COLOR);
+                let p = current_palette();
+
+                let brush = CreateSolidBrush(p.bg);
                 FillRect(hdc, &rc, brush);
                 let _ = DeleteObject(brush);
 
                 let font = make_font(hwnd);
                 let old = SelectObject(hdc, font);
                 SetBkMode(hdc, TRANSPARENT);
-                SetTextColor(hdc, TEXT_COLOR);
+                SetTextColor(hdc, p.text);
                 // Selection highlight: while the whole text is "selected" (fresh —
                 // on entry or Ctrl+A) fill a rect behind it, like a web input.
                 // DrawTextW with an empty buffer dereferences a dangling pointer
@@ -584,7 +612,7 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
                             let _ = GetTextExtentPoint32W(hdc, &[0x41u16], &mut ref_sz);
                             let caret_x = (rc.right - full_sz.cx) / 2 + head_sz.cx;
                             let top = (rc.bottom - ref_sz.cy) / 2;
-                            let pen = CreatePen(PS_SOLID, scale(hwnd, 1), TEXT_COLOR);
+                            let pen = CreatePen(PS_SOLID, scale(hwnd, 1), p.text);
                             let oldpen = SelectObject(hdc, pen);
                             let _ = MoveToEx(hdc, caret_x, top, None);
                             let _ = LineTo(hdc, caret_x, top + ref_sz.cy);
@@ -597,6 +625,16 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
                 SelectObject(hdc, old);
                 let _ = DeleteObject(font);
 
+                // Hairline border: frame the rounded region from the inside so
+                // the (DPI-scaled) 1px line is not clipped by the window region.
+                let radius = scale(hwnd, 16);
+                let rgn = CreateRoundRectRgn(0, 0, rc.right + 1, rc.bottom + 1, radius, radius);
+                let border_brush = CreateSolidBrush(p.border);
+                let t = scale(hwnd, 1).max(1);
+                let _ = FrameRgn(hdc, rgn, border_brush, t, t);
+                let _ = DeleteObject(border_brush);
+                let _ = DeleteObject(rgn);
+
                 let _ = EndPaint(hwnd, &ps);
                 LRESULT(0)
             }
@@ -605,6 +643,28 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
                     apply_label(hwnd, &text);
                 }
                 update_tray_icon(hwnd);
+                LRESULT(0)
+            }
+            WM_SETTINGCHANGE => {
+                if lparam_is_immersive_color_set(lparam) {
+                    let new_theme = crate::theme::detect();
+                    let changed = CURRENT_THEME.with(|t| {
+                        if t.get() != new_theme {
+                            t.set(new_theme);
+                            true
+                        } else {
+                            false
+                        }
+                    });
+                    if changed {
+                        let _ = InvalidateRect(hwnd, None, BOOL(1));
+                        update_tray_icon(hwnd);
+                    }
+                }
+                // Work-area change (taskbar moved/resized): re-anchor / re-clamp.
+                if wparam.0 as u32 == SPI_SETWORKAREA.0 {
+                    resize_and_position(hwnd);
+                }
                 LRESULT(0)
             }
             WM_APP_TRAY => {
@@ -658,14 +718,6 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
             WM_DISPLAYCHANGE => {
                 // Resolution / monitor add/remove: re-anchor or re-clamp.
                 resize_and_position(hwnd);
-                LRESULT(0)
-            }
-            WM_SETTINGCHANGE => {
-                // Only react to work-area changes (taskbar moved/resized), not
-                // every system-setting broadcast.
-                if wparam.0 as u32 == SPI_SETWORKAREA.0 {
-                    resize_and_position(hwnd);
-                }
                 LRESULT(0)
             }
             WM_LBUTTONDOWN => {
