@@ -38,6 +38,15 @@ switch desktops. Build it once, leave it running.
 The badge follows the Windows light/dark theme automatically. Double-click it to
 rename the current desktop; right-click the tray icon to reposition it or quit.
 
+## Positioning
+
+Place the badge at any of nine anchor points from the tray **Position** submenu,
+or drag it anywhere — the spot is remembered between runs.
+
+| Top left | Top right | Top center |
+| :------: | :-------: | :--------: |
+| ![Badge anchored top-left](assets/screenshots/position-top-left.png) | ![Badge anchored top-right](assets/screenshots/position-top-right.png) | ![Badge anchored top-center](assets/screenshots/position-top-center.png) |
+
 ## Install
 
 ### Download (recommended)
