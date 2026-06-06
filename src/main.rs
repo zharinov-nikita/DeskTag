@@ -1,15 +1,24 @@
+#![windows_subsystem = "windows"]
+
 mod badge;
 mod desktop;
 mod label;
 
 use std::time::{Duration, Instant};
 use windows::Win32::Foundation::HWND;
+use windows::Win32::System::Console::{AttachConsole, ATTACH_PARENT_PROCESS};
+use windows::Win32::UI::HiDpi::{
+    SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
     DispatchMessageW, GetMessageW, PeekMessageW, TranslateMessage, MSG, PM_REMOVE,
 };
 
 fn main() -> anyhow::Result<()> {
     if std::env::args().any(|a| a == "--once") {
+        unsafe {
+            let _ = AttachConsole(ATTACH_PARENT_PROCESS);
+        }
         match desktop::current_index_and_name() {
             Ok((index, name)) => println!("{}", label::format_label(index, &name)),
             Err(e) => {
@@ -19,6 +28,10 @@ fn main() -> anyhow::Result<()> {
         }
         return Ok(());
     }
+
+    unsafe {
+        let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    }
     run_daemon()
 }
 
@@ -27,13 +40,17 @@ fn run_daemon() -> anyhow::Result<()> {
     let hwnd = badge::create(&initial)?;
     pin_with_retry(hwnd);
     badge::install_tray(hwnd);
-    let _listener = desktop::start_listener(hwnd)
-        .map_err(|e| {
-            eprintln!("warning: event listener failed, label will not auto-update: {e:?}");
-            e
-        })
-        .ok();
-    run_message_loop();
+    match desktop::start_listener(hwnd) {
+        Ok(guard) => {
+            let _listener = guard; // keep alive
+            run_message_loop();
+        }
+        Err(e) => {
+            eprintln!("warning: listener failed, using fallback poll: {e:?}");
+            badge::start_fallback_poll(hwnd);
+            run_message_loop();
+        }
+    }
     Ok(())
 }
 

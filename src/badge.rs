@@ -20,6 +20,8 @@ pub const WM_APP_DESKTOP_CHANGED: u32 = WM_APP + 1;
 const WM_APP_TRAY: u32 = WM_APP + 2;
 const TRAY_UID: u32 = 1;
 const MENU_QUIT: usize = 1001;
+const TIMER_TOPMOST: usize = 1;
+const TIMER_POLL: usize = 2;
 
 // COLORREF is 0x00BBGGRR.
 const BG_COLOR: COLORREF = COLORREF(0x0020_2020); // dark gray
@@ -98,6 +100,7 @@ pub fn create(initial: &str) -> Result<HWND> {
 
         resize_and_position(hwnd);
         let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+        SetTimer(hwnd, TIMER_TOPMOST, 2000, None);
         Ok(hwnd)
     }
 }
@@ -114,6 +117,14 @@ pub fn reassert_topmost(hwnd: HWND) {
             0,
             SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
         );
+    }
+}
+
+/// Start a 750ms poll that re-reads the label. Use only as a fallback when the
+/// event listener could not start.
+pub fn start_fallback_poll(hwnd: HWND) {
+    unsafe {
+        SetTimer(hwnd, TIMER_POLL, 750, None);
     }
 }
 
@@ -277,6 +288,23 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
             WM_DESTROY => {
                 remove_tray(hwnd);
                 PostQuitMessage(0);
+                LRESULT(0)
+            }
+            WM_TIMER => {
+                match wparam.0 {
+                    TIMER_TOPMOST => reassert_topmost(hwnd),
+                    TIMER_POLL => {
+                        if let Ok(text) = crate::desktop::current_label() {
+                            // apply_label is cheap and idempotent; only repaints on change of size.
+                            apply_label(hwnd, &text);
+                        }
+                    }
+                    _ => {}
+                }
+                LRESULT(0)
+            }
+            WM_DPICHANGED => {
+                resize_and_position(hwnd);
                 LRESULT(0)
             }
             _ => DefWindowProcW(hwnd, msg, wparam, lparam),
