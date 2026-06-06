@@ -2,14 +2,15 @@
 //! Painted with GDI; shaped with a rounded-rect region; uniform alpha.
 
 use anyhow::{anyhow, Result};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use windows::core::w;
 use windows::Win32::Foundation::{BOOL, COLORREF, HWND, LPARAM, LRESULT, RECT, SIZE, WPARAM};
 use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::Shell::{
-    Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NOTIFYICONDATAW,
+    Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY,
+    NOTIFYICONDATAW,
 };
 use windows::Win32::UI::WindowsAndMessaging::*;
 
@@ -30,6 +31,8 @@ const ALPHA: u8 = 220;
 
 thread_local! {
     static LABEL: RefCell<String> = RefCell::new(String::from("Desktop ?"));
+    /// The tray HICON we currently own (null = none / using a shared fallback).
+    static CURRENT_TRAY_ICON: Cell<HICON> = const { Cell::new(HICON(std::ptr::null_mut())) };
 }
 
 /// Create and show the badge window. Returns its HWND.
@@ -217,10 +220,35 @@ unsafe fn resize_and_position(hwnd: HWND) {
     let _ = SetWindowRgn(hwnd, rgn, BOOL(1));
 }
 
-/// Install a tray icon (stock app icon) whose context menu offers Quit.
+/// Current desktop number ("1", "2", …) for the tray icon. Falls back to "?".
+fn current_desktop_number() -> String {
+    match crate::desktop::current_index_and_name() {
+        Ok((index0, _)) => (index0 + 1).to_string(),
+        Err(_) => "?".to_string(),
+    }
+}
+
+/// Square tray icon size for this session (16, or 32 on HiDPI shells).
+fn tray_icon_size() -> u32 {
+    let px = unsafe { GetSystemMetrics(SM_CXSMICON) };
+    if px <= 0 {
+        16
+    } else {
+        px as u32
+    }
+}
+
+/// Install a tray icon (dynamic desktop-number pill) whose context menu offers Quit.
 pub fn install_tray(hwnd: HWND) {
     unsafe {
-        let hicon = LoadIconW(None, IDI_APPLICATION).unwrap_or_default();
+        let size = tray_icon_size();
+        let hicon = match crate::icon::make_tray_hicon(&current_desktop_number(), size) {
+            Ok(h) => {
+                CURRENT_TRAY_ICON.with(|c| c.set(h));
+                h
+            }
+            Err(_) => LoadIconW(None, IDI_APPLICATION).unwrap_or_default(),
+        };
         let mut nid = NOTIFYICONDATAW {
             cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
             hWnd: hwnd,
@@ -238,6 +266,31 @@ pub fn install_tray(hwnd: HWND) {
     }
 }
 
+/// Rebuild the tray icon for the current desktop number and push it to the shell.
+/// Destroys the previously-owned icon. No-op on rasterise failure (keeps current).
+fn update_tray_icon(hwnd: HWND) {
+    unsafe {
+        let size = tray_icon_size();
+        let new = match crate::icon::make_tray_hicon(&current_desktop_number(), size) {
+            Ok(h) => h,
+            Err(_) => return,
+        };
+        let nid = NOTIFYICONDATAW {
+            cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
+            hWnd: hwnd,
+            uID: TRAY_UID,
+            uFlags: NIF_ICON,
+            hIcon: new,
+            ..Default::default()
+        };
+        let _ = Shell_NotifyIconW(NIM_MODIFY, &nid);
+        let old = CURRENT_TRAY_ICON.with(|c| c.replace(new));
+        if !old.is_invalid() {
+            let _ = DestroyIcon(old);
+        }
+    }
+}
+
 unsafe fn remove_tray(hwnd: HWND) {
     let nid = NOTIFYICONDATAW {
         cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
@@ -246,6 +299,10 @@ unsafe fn remove_tray(hwnd: HWND) {
         ..Default::default()
     };
     let _ = Shell_NotifyIconW(NIM_DELETE, &nid);
+    let old = CURRENT_TRAY_ICON.with(|c| c.replace(HICON(std::ptr::null_mut())));
+    if !old.is_invalid() {
+        let _ = DestroyIcon(old);
+    }
 }
 
 unsafe fn show_tray_menu(hwnd: HWND) {
@@ -295,6 +352,7 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
                 if let Ok(text) = crate::desktop::current_label() {
                     apply_label(hwnd, &text);
                 }
+                update_tray_icon(hwnd);
                 LRESULT(0)
             }
             WM_APP_TRAY => {
@@ -325,6 +383,7 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
                             // apply_label is cheap and idempotent; only repaints on change of size.
                             apply_label(hwnd, &text);
                         }
+                        update_tray_icon(hwnd);
                     }
                     _ => {}
                 }
