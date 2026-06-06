@@ -30,6 +30,7 @@ const TIMER_CARET: usize = 3;
 // COLORREF is 0x00BBGGRR.
 const BG_COLOR: COLORREF = COLORREF(0x0020_2020); // dark gray
 const TEXT_COLOR: COLORREF = COLORREF(0x00F0_F0F0); // near white
+const SEL_COLOR: COLORREF = COLORREF(0x00D4_7800); // selection blue (#0078D4), 0x00BBGGRR
 const ALPHA: u8 = 220;
 
 thread_local! {
@@ -371,14 +372,34 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
                 let old = SelectObject(hdc, font);
                 SetBkMode(hdc, TRANSPARENT);
                 SetTextColor(hdc, TEXT_COLOR);
+                // Selection highlight: while the whole text is "selected" (fresh —
+                // on entry or Ctrl+A) fill a rect behind it, like a web input.
                 // DrawTextW with an empty buffer dereferences a dangling pointer
-                // and faults on some Windows builds (0xC000041D). An unnamed
-                // desktop's edit buffer is empty, so skip drawing when empty.
+                // and faults on some Windows builds (0xC000041D), so skip drawing
+                // entirely when the text is empty.
                 with_display_text(|text| {
                     if text.is_empty() {
                         return;
                     }
                     let mut utf16: Vec<u16> = text.encode_utf16().collect();
+                    let mut tsz = SIZE::default();
+                    let _ = GetTextExtentPoint32W(hdc, &utf16, &mut tsz);
+                    let tx = (rc.right - tsz.cx) / 2;
+                    let ty = (rc.bottom - tsz.cy) / 2;
+                    let selected = EDIT.with(|e| {
+                        e.borrow().as_ref().map(|s| s.is_selected()).unwrap_or(false)
+                    });
+                    if selected {
+                        let sel = RECT {
+                            left: tx,
+                            top: ty,
+                            right: tx + tsz.cx,
+                            bottom: ty + tsz.cy,
+                        };
+                        let brush = CreateSolidBrush(SEL_COLOR);
+                        FillRect(hdc, &sel, brush);
+                        let _ = DeleteObject(brush);
+                    }
                     let _ = DrawTextW(
                         hdc,
                         &mut utf16,
@@ -395,6 +416,10 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
                 if is_editing() && CARET_ON.with(|c| c.get()) {
                     EDIT.with(|e| {
                         if let Some(s) = e.borrow().as_ref() {
+                            // A visible selection is the indicator; hide the caret.
+                            if s.is_selected() && !s.text().is_empty() {
+                                return;
+                            }
                             let full: Vec<u16> = s.text().encode_utf16().collect();
                             let mut full_sz = SIZE::default();
                             let _ = GetTextExtentPoint32W(hdc, &full, &mut full_sz);

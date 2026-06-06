@@ -71,6 +71,12 @@ impl EditState {
         self.fresh = true;
     }
 
+    /// True while the whole text is "selected" (fresh) — the next edit replaces
+    /// it. Drives the selection highlight in the badge.
+    pub fn is_selected(&self) -> bool {
+        self.fresh
+    }
+
     pub fn text(&self) -> &str {
         &self.buf
     }
@@ -173,5 +179,15 @@ mod tests {
         e.select_all();
         e.backspace();
         assert_eq!(e.text(), "");
+    }
+
+    #[test]
+    fn is_selected_reflects_fresh() {
+        let mut e = EditState::new("abc");
+        assert!(e.is_selected()); // fresh on entry
+        e.insert_char('x');
+        assert!(!e.is_selected()); // cleared after first edit
+        e.select_all();
+        assert!(e.is_selected()); // re-selected
     }
 }
