@@ -27,3 +27,8 @@ features = [
 
 [build-dependencies]
 winresource = "0.1"
+
+[dev-dependencies.cargo-husky]
+version = "1"
+default-features = false
+features = ["user-hooks"]
