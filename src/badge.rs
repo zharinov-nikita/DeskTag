@@ -11,6 +11,7 @@ use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::Shell::{
     Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NOTIFYICONDATAW,
 };
+use windows::Win32::UI::Input::KeyboardAndMouse::{SetFocus, VIRTUAL_KEY, VK_ESCAPE, VK_RETURN};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 /// Posted (from the listener thread) when the current desktop or its name changes.
@@ -22,6 +23,7 @@ const TRAY_UID: u32 = 1;
 const MENU_QUIT: usize = 1001;
 const TIMER_TOPMOST: usize = 1;
 const TIMER_POLL: usize = 2;
+const TIMER_CARET: usize = 3;
 
 // COLORREF is 0x00BBGGRR.
 const BG_COLOR: COLORREF = COLORREF(0x0020_2020); // dark gray
@@ -30,6 +32,10 @@ const ALPHA: u8 = 220;
 
 thread_local! {
     static LABEL: RefCell<String> = RefCell::new(String::from("Desktop ?"));
+    // Some(_) while renaming the current desktop inline; None in display mode.
+    static EDIT: RefCell<Option<crate::edit::EditState>> = RefCell::new(None);
+    // Caret blink phase while editing.
+    static CARET_ON: std::cell::Cell<bool> = std::cell::Cell::new(true);
 }
 
 /// Create and show the badge window. Returns its HWND.
@@ -77,14 +83,11 @@ pub fn create(initial: &str) -> Result<HWND> {
         )
         .map_err(|e| anyhow!("CreateWindowExW(owner): {e:?}"))?;
 
-        // WS_EX_TOOLWINDOW is added later (post-pin; see hide_from_alt_tab and the
-        // owner comment above), not here. WS_EX_NOACTIVATE is never used: the badge
-        // already never activates — it is shown with SW_SHOWNOACTIVATE, moved with
-        // SWP_NOACTIVATE, and WS_EX_TRANSPARENT passes clicks through.
-        // Drop WS_EX_TRANSPARENT so the badge receives mouse clicks (needed to
-        // start an inline rename on double-click). To avoid stealing focus on
-        // ordinary clicks, WS_EX_NOACTIVATE is added later in hide_from_alt_tab
-        // (post-pin, like WS_EX_TOOLWINDOW).
+        // WS_EX_TOOLWINDOW and WS_EX_NOACTIVATE are both added later, post-pin, in
+        // hide_from_alt_tab: a tool/noactivate window is denied the shell app view
+        // that winvd::pin_window needs. We drop WS_EX_TRANSPARENT here so the badge
+        // receives the double-click that starts an inline rename; WS_EX_NOACTIVATE
+        // (added post-pin) then keeps ordinary clicks from stealing focus.
         let ex_style = WS_EX_LAYERED | WS_EX_TOPMOST;
 
         let hwnd = CreateWindowExW(
@@ -200,6 +203,22 @@ unsafe fn make_font(hwnd: HWND) -> HFONT {
     )
 }
 
+/// Run `f` with the text the badge should currently show: the edit buffer when
+/// renaming, otherwise the label.
+fn with_display_text<R>(f: impl FnOnce(&str) -> R) -> R {
+    EDIT.with(|e| {
+        if let Some(s) = e.borrow().as_ref() {
+            f(s.text())
+        } else {
+            LABEL.with(|l| f(&l.borrow()))
+        }
+    })
+}
+
+fn is_editing() -> bool {
+    EDIT.with(|e| e.borrow().is_some())
+}
+
 unsafe fn measure(hwnd: HWND) -> (i32, i32) {
     let pad_x = scale(hwnd, 14);
     let pad_y = scale(hwnd, 7);
@@ -207,9 +226,9 @@ unsafe fn measure(hwnd: HWND) -> (i32, i32) {
     let font = make_font(hwnd);
     let old = SelectObject(hdc, font);
     let mut size = SIZE::default();
-    LABEL.with(|l| {
-        let text: Vec<u16> = l.borrow().encode_utf16().collect();
-        let _ = GetTextExtentPoint32W(hdc, &text, &mut size);
+    with_display_text(|text| {
+        let utf16: Vec<u16> = text.encode_utf16().collect();
+        let _ = GetTextExtentPoint32W(hdc, &utf16, &mut size);
     });
     SelectObject(hdc, old);
     let _ = DeleteObject(font);
@@ -271,6 +290,59 @@ unsafe fn show_tray_menu(hwnd: HWND) {
     let _ = DestroyMenu(menu);
 }
 
+/// Enter rename mode: load the current name, grab keyboard focus, start the
+/// caret blink, repaint. If the current name can't be read, stay in display
+/// mode (spec: don't enter the edit with a bogus empty buffer).
+fn enter_edit(hwnd: HWND) {
+    let name = match crate::desktop::current_name() {
+        Ok(n) => n,
+        Err(e) => {
+            eprintln!("enter_edit: current_name failed: {e:?}");
+            return;
+        }
+    };
+    EDIT.with(|e| *e.borrow_mut() = Some(crate::edit::EditState::new(&name)));
+    CARET_ON.with(|c| c.set(true));
+    unsafe {
+        let _ = SetForegroundWindow(hwnd);
+        let _ = SetFocus(hwnd);
+        SetTimer(hwnd, TIMER_CARET, 500, None);
+        resize_and_position(hwnd);
+        let _ = InvalidateRect(hwnd, None, BOOL(1));
+    }
+}
+
+/// Save the edited name and leave rename mode.
+fn commit_edit(hwnd: HWND) {
+    let text = EDIT.with(|e| e.borrow().as_ref().map(|s| s.text().to_string()));
+    if let Some(text) = text {
+        if let Err(e) = crate::desktop::rename_current(&text) {
+            eprintln!("rename failed: {e:?}");
+        }
+    }
+    leave_edit(hwnd);
+}
+
+/// Discard the edit and leave rename mode.
+fn cancel_edit(hwnd: HWND) {
+    leave_edit(hwnd);
+}
+
+/// Clear edit state, stop the caret blink, restore the normal label.
+fn leave_edit(hwnd: HWND) {
+    EDIT.with(|e| *e.borrow_mut() = None);
+    unsafe {
+        let _ = KillTimer(hwnd, TIMER_CARET);
+    }
+    match crate::desktop::current_label() {
+        Ok(text) => apply_label(hwnd, &text),
+        Err(_) => unsafe {
+            resize_and_position(hwnd);
+            let _ = InvalidateRect(hwnd, None, BOOL(1));
+        },
+    }
+}
+
 extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     unsafe {
         match msg {
@@ -288,11 +360,11 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
                 let old = SelectObject(hdc, font);
                 SetBkMode(hdc, TRANSPARENT);
                 SetTextColor(hdc, TEXT_COLOR);
-                LABEL.with(|l| {
-                    let mut text: Vec<u16> = l.borrow().encode_utf16().collect();
+                with_display_text(|text| {
+                    let mut utf16: Vec<u16> = text.encode_utf16().collect();
                     let _ = DrawTextW(
                         hdc,
-                        &mut text,
+                        &mut utf16,
                         &mut rc,
                         DT_CENTER | DT_VCENTER | DT_SINGLELINE,
                     );
@@ -338,12 +410,61 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
                             apply_label(hwnd, &text);
                         }
                     }
+                    TIMER_CARET => {
+                        CARET_ON.with(|c| c.set(!c.get()));
+                        let _ = InvalidateRect(hwnd, None, BOOL(1));
+                    }
                     _ => {}
                 }
                 LRESULT(0)
             }
             WM_DPICHANGED => {
                 resize_and_position(hwnd);
+                LRESULT(0)
+            }
+            WM_LBUTTONDBLCLK => {
+                enter_edit(hwnd);
+                LRESULT(0)
+            }
+            WM_CHAR => {
+                if is_editing() {
+                    let code = wparam.0 as u32;
+                    if code == 0x08 {
+                        // Backspace
+                        EDIT.with(|e| {
+                            if let Some(s) = e.borrow_mut().as_mut() {
+                                s.backspace();
+                            }
+                        });
+                    } else if let Some(c) = char::from_u32(code) {
+                        // Enter/Esc are control chars handled in WM_KEYDOWN.
+                        if !c.is_control() {
+                            EDIT.with(|e| {
+                                if let Some(s) = e.borrow_mut().as_mut() {
+                                    s.insert_char(c);
+                                }
+                            });
+                        }
+                    }
+                    resize_and_position(hwnd);
+                    let _ = InvalidateRect(hwnd, None, BOOL(1));
+                }
+                LRESULT(0)
+            }
+            WM_KEYDOWN => {
+                if is_editing() {
+                    match VIRTUAL_KEY(wparam.0 as u16) {
+                        VK_RETURN => commit_edit(hwnd),
+                        VK_ESCAPE => cancel_edit(hwnd),
+                        _ => {}
+                    }
+                }
+                LRESULT(0)
+            }
+            WM_KILLFOCUS => {
+                if is_editing() {
+                    commit_edit(hwnd);
+                }
                 LRESULT(0)
             }
             _ => DefWindowProcW(hwnd, msg, wparam, lparam),
