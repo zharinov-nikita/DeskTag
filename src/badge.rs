@@ -18,6 +18,8 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows::Win32::UI::WindowsAndMessaging::*;
 
+use crate::position::{self, Anchor, Position};
+
 /// Posted (from the listener thread) when the current desktop or its name changes.
 pub const WM_APP_DESKTOP_CHANGED: u32 = WM_APP + 1;
 
@@ -43,11 +45,15 @@ thread_local! {
     static CARET_ON: Cell<bool> = const { Cell::new(true) };
     /// The tray HICON we currently own (null = none / using a shared fallback).
     static CURRENT_TRAY_ICON: Cell<HICON> = const { Cell::new(HICON(std::ptr::null_mut())) };
+    /// Where the badge sits; loaded from config on create, updated by the tray
+    /// Position submenu and by drag-to-move.
+    static POSITION: RefCell<Position> = RefCell::new(Position::default());
 }
 
 /// Create and show the badge window. Returns its HWND.
 pub fn create(initial: &str) -> Result<HWND> {
     LABEL.with(|l| *l.borrow_mut() = initial.to_string());
+    POSITION.with(|p| *p.borrow_mut() = crate::config::load());
     unsafe {
         let hinstance = GetModuleHandleW(None).map_err(|e| anyhow!("GetModuleHandleW: {e:?}"))?;
         let class_name = w!("DeskTagBadgeClass");
@@ -252,11 +258,49 @@ unsafe fn measure(hwnd: HWND) -> (i32, i32) {
     (w, h)
 }
 
+/// Primary-monitor work area (taskbar excluded). Falls back to the full primary
+/// screen if the query fails or returns an empty rect.
+unsafe fn primary_work_area() -> position::Rect {
+    let mut rc = RECT::default();
+    let ok = SystemParametersInfoW(
+        SPI_GETWORKAREA,
+        0,
+        Some(&mut rc as *mut RECT as *mut core::ffi::c_void),
+        SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+    )
+    .is_ok();
+    if ok && rc.right > rc.left && rc.bottom > rc.top {
+        position::Rect::new(rc.left, rc.top, rc.right, rc.bottom)
+    } else {
+        position::Rect::new(0, 0, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN))
+    }
+}
+
+/// Bounding rect of the whole virtual screen (all monitors), for clamping a
+/// custom position. Falls back to the primary screen on failure.
+unsafe fn virtual_bounds() -> position::Rect {
+    let x = GetSystemMetrics(SM_XVIRTUALSCREEN);
+    let y = GetSystemMetrics(SM_YVIRTUALSCREEN);
+    let w = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+    let h = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+    if w > 0 && h > 0 {
+        position::Rect::new(x, y, x + w, y + h)
+    } else {
+        position::Rect::new(0, 0, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN))
+    }
+}
+
+/// Anchor origin against the primary work area, with a DPI-scaled 8px margin.
+unsafe fn anchor_origin_dpi(hwnd: HWND, a: Anchor, w: i32, h: i32) -> (i32, i32) {
+    position::anchor_origin(a, primary_work_area(), (w, h), scale(hwnd, 8))
+}
+
 unsafe fn resize_and_position(hwnd: HWND) {
     let (w, h) = measure(hwnd);
-    let screen_w = GetSystemMetrics(SM_CXSCREEN);
-    let x = (screen_w - w) / 2;
-    let y = scale(hwnd, 8);
+    let (x, y) = match POSITION.with(|p| *p.borrow()) {
+        Position::Anchor(a) => anchor_origin_dpi(hwnd, a, w, h),
+        Position::Custom { x, y } => position::clamp((x, y), virtual_bounds(), (w, h)),
+    };
     let _ = SetWindowPos(hwnd, HWND_TOPMOST, x, y, w, h, SWP_NOACTIVATE);
     let radius = scale(hwnd, 16);
     let rgn = CreateRoundRectRgn(0, 0, w + 1, h + 1, radius, radius);
