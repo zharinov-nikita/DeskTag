@@ -41,11 +41,32 @@ pub fn create(initial: &str) -> Result<HWND> {
             return Err(anyhow!("RegisterClassExW failed"));
         }
 
-        let ex_style = WS_EX_LAYERED
-            | WS_EX_TRANSPARENT
-            | WS_EX_TOPMOST
-            | WS_EX_TOOLWINDOW
-            | WS_EX_NOACTIVATE;
+        // Hidden owner window. Owning the badge keeps it off the taskbar and out
+        // of Alt-Tab WITHOUT WS_EX_TOOLWINDOW. This matters: a tool window (or a
+        // WS_EX_NOACTIVATE window) is not given an application view by the shell,
+        // and winvd::pin_window needs that view — so a tool window can never be
+        // pinned to all desktops. Ownership achieves the same hiding while
+        // leaving the badge pinnable.
+        let owner = CreateWindowExW(
+            WINDOW_EX_STYLE(0),
+            class_name,
+            w!("fbvd-owner"),
+            WS_POPUP,
+            0,
+            0,
+            0,
+            0,
+            None,
+            None,
+            hinstance,
+            None,
+        )
+        .map_err(|e| anyhow!("CreateWindowExW(owner): {e:?}"))?;
+
+        // No WS_EX_TOOLWINDOW / WS_EX_NOACTIVATE (see owner comment above). The
+        // badge still never activates: it is shown with SW_SHOWNOACTIVATE, moved
+        // with SWP_NOACTIVATE, and WS_EX_TRANSPARENT passes clicks through.
+        let ex_style = WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST;
 
         let hwnd = CreateWindowExW(
             ex_style,
@@ -56,7 +77,7 @@ pub fn create(initial: &str) -> Result<HWND> {
             0,
             10,
             10,
-            None,
+            owner,
             None,
             hinstance,
             None,

@@ -20,3 +20,10 @@ pub fn current_label() -> Result<String> {
     let (index, name) = current_index_and_name()?;
     Ok(format_label(index, &name))
 }
+
+use windows::Win32::Foundation::HWND;
+
+/// Pin a window so it appears on every virtual desktop. Best-effort.
+pub fn pin_to_all_desktops(hwnd: HWND) -> Result<()> {
+    winvd::pin_window(hwnd).map_err(|e| anyhow!("pin_window: {e:?}"))
+}
