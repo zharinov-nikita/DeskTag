@@ -360,7 +360,13 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
                 let old = SelectObject(hdc, font);
                 SetBkMode(hdc, TRANSPARENT);
                 SetTextColor(hdc, TEXT_COLOR);
+                // DrawTextW with an empty buffer dereferences a dangling pointer
+                // and faults on some Windows builds (0xC000041D). An unnamed
+                // desktop's edit buffer is empty, so skip drawing when empty.
                 with_display_text(|text| {
+                    if text.is_empty() {
+                        return;
+                    }
                     let mut utf16: Vec<u16> = text.encode_utf16().collect();
                     let _ = DrawTextW(
                         hdc,
