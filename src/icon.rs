@@ -58,7 +58,12 @@ pub fn rasterize(text: &str, size: u32) -> Result<Vec<u8>> {
         SetTextColor(hdc, TEXT);
         let font = make_icon_font(hdc, text, size);
         let old_font = SelectObject(hdc, font);
-        let mut rc = RECT { left: 0, top: 0, right: s, bottom: s };
+        let mut rc = RECT {
+            left: 0,
+            top: 0,
+            right: s,
+            bottom: s,
+        };
         let mut wtext: Vec<u16> = text.encode_utf16().collect();
         let _ = DrawTextW(
             hdc,
@@ -83,7 +88,11 @@ pub fn rasterize(text: &str, size: u32) -> Result<Vec<u8>> {
         for y in 0..s {
             for x in 0..s {
                 let i = ((y * s + x) * 4) as usize;
-                let a = if PtInRegion(rgn, x, y).as_bool() { 255u8 } else { 0u8 };
+                let a = if PtInRegion(rgn, x, y).as_bool() {
+                    255u8
+                } else {
+                    0u8
+                };
                 rgba[i] = bgra[i + 2]; // R
                 rgba[i + 1] = bgra[i + 1]; // G
                 rgba[i + 2] = bgra[i]; // B
@@ -101,11 +110,17 @@ unsafe fn make_icon_font(hdc: HDC, text: &str, size: u32) -> HFONT {
     let mut h = (size as i32 * 72 / 100).max(6);
     loop {
         let font = CreateFontW(
-            -h, 0, 0, 0,
+            -h,
+            0,
+            0,
+            0,
             FW_SEMIBOLD.0 as i32,
-            0, 0, 0,
+            0,
+            0,
+            0,
             DEFAULT_CHARSET.0 as u32,
-            0, 0,
+            0,
+            0,
             CLEARTYPE_QUALITY.0 as u32,
             0,
             w!("Segoe UI"),
@@ -277,8 +292,14 @@ mod tests {
         let rgba = rasterize("1", size).unwrap();
         assert_eq!(rgba.len(), (size * size * 4) as usize);
         // Pill body is opaque somewhere, corners are transparent somewhere.
-        assert!(rgba.chunks(4).any(|p| p[3] == 255), "expected opaque pixels");
-        assert!(rgba.chunks(4).any(|p| p[3] == 0), "expected transparent corners");
+        assert!(
+            rgba.chunks(4).any(|p| p[3] == 255),
+            "expected opaque pixels"
+        );
+        assert!(
+            rgba.chunks(4).any(|p| p[3] == 0),
+            "expected transparent corners"
+        );
     }
 
     #[test]

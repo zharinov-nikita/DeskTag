@@ -53,12 +53,18 @@ impl EditState {
     }
 
     fn next_char(&self, pos: usize) -> usize {
-        self.buf[pos..].chars().next().map_or(pos, |c| pos + c.len_utf8())
+        self.buf[pos..]
+            .chars()
+            .next()
+            .map_or(pos, |c| pos + c.len_utf8())
     }
 
     /// Is the char starting at `pos` whitespace?
     fn ws_at(&self, pos: usize) -> bool {
-        self.buf[pos..].chars().next().is_some_and(|c| c.is_whitespace())
+        self.buf[pos..]
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_whitespace())
     }
 
     /// Start of the previous word: skip whitespace left, then non-whitespace.

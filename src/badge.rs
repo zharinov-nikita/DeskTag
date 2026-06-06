@@ -8,13 +8,13 @@ use windows::Win32::Foundation::{BOOL, COLORREF, HWND, LPARAM, LRESULT, RECT, SI
 use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
-use windows::Win32::UI::Shell::{
-    Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY,
-    NOTIFYICONDATAW,
-};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetKeyState, SetFocus, VIRTUAL_KEY, VK_CONTROL, VK_DELETE, VK_END, VK_ESCAPE, VK_HOME, VK_LEFT,
     VK_RETURN, VK_RIGHT, VK_SHIFT,
+};
+use windows::Win32::UI::Shell::{
+    Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY,
+    NOTIFYICONDATAW,
 };
 use windows::Win32::UI::WindowsAndMessaging::*;
 
@@ -571,8 +571,8 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
                         if let Some(s) = e.borrow_mut().as_mut() {
                             match code {
                                 0x08 => s.backspace(),  // Backspace
-                                0x7F => s.clear(),       // Ctrl+Backspace -> clear all
-                                0x01 => s.select_all(),  // Ctrl+A -> select all
+                                0x7F => s.clear(),      // Ctrl+Backspace -> clear all
+                                0x01 => s.select_all(), // Ctrl+A -> select all
                                 _ => {
                                     if let Some(c) = char::from_u32(code) {
                                         // Enter/Esc are control chars (WM_KEYDOWN).
