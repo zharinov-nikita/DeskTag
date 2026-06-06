@@ -8,10 +8,18 @@ use windows::Win32::Foundation::{BOOL, COLORREF, HWND, LPARAM, LRESULT, RECT, SI
 use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
+use windows::Win32::UI::Shell::{
+    Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NOTIFYICONDATAW,
+};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 /// Posted (from the listener thread) when the current desktop or its name changes.
 pub const WM_APP_DESKTOP_CHANGED: u32 = WM_APP + 1;
+
+/// Posted by the shell when the tray icon is interacted with.
+const WM_APP_TRAY: u32 = WM_APP + 2;
+const TRAY_UID: u32 = 1;
+const MENU_QUIT: usize = 1001;
 
 // COLORREF is 0x00BBGGRR.
 const BG_COLOR: COLORREF = COLORREF(0x0020_2020); // dark gray
@@ -171,6 +179,48 @@ unsafe fn resize_and_position(hwnd: HWND) {
     let _ = SetWindowRgn(hwnd, rgn, BOOL(1));
 }
 
+/// Install a tray icon (stock app icon) whose context menu offers Quit.
+pub fn install_tray(hwnd: HWND) {
+    unsafe {
+        let hicon = LoadIconW(None, IDI_APPLICATION).unwrap_or_default();
+        let mut nid = NOTIFYICONDATAW {
+            cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
+            hWnd: hwnd,
+            uID: TRAY_UID,
+            uFlags: NIF_MESSAGE | NIF_ICON | NIF_TIP,
+            uCallbackMessage: WM_APP_TRAY,
+            hIcon: hicon,
+            ..Default::default()
+        };
+        // szTip: copy "fbvd" into the fixed [u16; 128] buffer.
+        for (i, c) in "fbvd".encode_utf16().enumerate() {
+            nid.szTip[i] = c;
+        }
+        let _ = Shell_NotifyIconW(NIM_ADD, &nid);
+    }
+}
+
+unsafe fn remove_tray(hwnd: HWND) {
+    let nid = NOTIFYICONDATAW {
+        cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
+        hWnd: hwnd,
+        uID: TRAY_UID,
+        ..Default::default()
+    };
+    let _ = Shell_NotifyIconW(NIM_DELETE, &nid);
+}
+
+unsafe fn show_tray_menu(hwnd: HWND) {
+    let menu = CreatePopupMenu().unwrap_or_default();
+    let _ = AppendMenuW(menu, MF_STRING, MENU_QUIT, w!("Quit"));
+    let mut pt = windows::Win32::Foundation::POINT::default();
+    let _ = GetCursorPos(&mut pt);
+    // Required so the menu closes when focus is lost.
+    let _ = SetForegroundWindow(hwnd);
+    let _ = TrackPopupMenu(menu, TPM_RIGHTBUTTON, pt.x, pt.y, 0, hwnd, None);
+    let _ = DestroyMenu(menu);
+}
+
 extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     unsafe {
         match msg {
@@ -207,6 +257,26 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
                 if let Ok(text) = crate::desktop::current_label() {
                     apply_label(hwnd, &text);
                 }
+                LRESULT(0)
+            }
+            WM_APP_TRAY => {
+                // lParam low word holds the mouse event.
+                let event = (lparam.0 as u32) & 0xFFFF;
+                if event == WM_RBUTTONUP || event == WM_LBUTTONUP {
+                    show_tray_menu(hwnd);
+                }
+                LRESULT(0)
+            }
+            WM_COMMAND => {
+                if (wparam.0 & 0xFFFF) == MENU_QUIT {
+                    remove_tray(hwnd);
+                    PostQuitMessage(0);
+                }
+                LRESULT(0)
+            }
+            WM_DESTROY => {
+                remove_tray(hwnd);
+                PostQuitMessage(0);
                 LRESULT(0)
             }
             _ => DefWindowProcW(hwnd, msg, wparam, lparam),
